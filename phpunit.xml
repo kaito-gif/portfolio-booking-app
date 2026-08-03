@@ -23,8 +23,15 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
+        <!-- SQLiteではなくMySQLで実行する。本番と同じ照合順序・unique制約のNULL挙動に
+             依存しているため(docs/detailed-design.md 16.2)。開発用DBと分離するため
+             DB_DATABASEは専用の booking_testing を指す(docker/mysql/init.sqlが作成)。 -->
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_HOST" value="db"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_DATABASE" value="booking_testing"/>
+        <env name="DB_USERNAME" value="booking"/>
+        <env name="DB_PASSWORD" value="secret"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>

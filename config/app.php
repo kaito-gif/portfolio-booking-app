@@ -63,9 +63,13 @@ return [
     | will be used by the PHP date and date-time functions. The timezone
     | is set to "UTC" by default as it is suitable for most use cases.
     |
+    | このアプリは多拠点・多言語を対象外としているため JST に固定する。
+    | UTC保存にしないのは、DBを直接見たときに日付が1日ずれて見える不利益を
+    | 避けるため(docs/detailed-design.md 3.1)。
+    |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => 'Asia/Tokyo',
 
     /*
     |--------------------------------------------------------------------------

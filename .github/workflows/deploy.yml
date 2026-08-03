@@ -1,10 +1,11 @@
 name: Deploy
 
-# main への push で本番へ反映する。ただし environment: production の承認を挟むため、
-# 承認するまでマイグレーションは走らない(docs/design.md 11章)。
+# 本来は main への push で本番へ反映し、environment: production の承認を挟む
+# 設計(docs/design.md 11章)。ただし Required reviewers は private リポジトリでは
+# GitHub Pro 以上が必要で、現状のプランでは設定できない。承認ゲートが無い状態で
+# push トリガーを有効にすると意図せず即時デプロイされるため、リポジトリを公開して
+# Required reviewers を設定するまでは手動実行(workflow_dispatch)のみに限定する。
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # デプロイの多重実行を避ける。途中で打ち切ると中途半端な状態が残るため cancel はしない

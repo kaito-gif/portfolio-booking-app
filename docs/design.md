@@ -37,7 +37,7 @@
 | フレームワーク | Laravel | 要件どおり |
 | 管理画面 | Filament | 要件 10 で決定済み |
 | 顧客照会画面 | 素の Blade + Tailwind | 下記 |
-| DB | MySQL | Xserver の標準 |
+| DB | 本番: MariaDB 10.5 系 / ローカル・CI: MySQL 8.0 | Xserver 共用サーバーの標準エンジンが MariaDB のため（詳細設計 2.1） |
 | キュー | database ドライバ | Redis が使えない |
 | キャッシュ・セッション | database ドライバ | 同上 |
 | メール | SMTP + 送信履歴の保存 | 7章 |

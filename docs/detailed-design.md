@@ -31,7 +31,7 @@
 | PHP | 8.3 以上（Filament の要求に合わせる） | 段階0でサーバーパネルの設定を確認・変更 |
 | Laravel | 採用時点の最新 LTS 系 | メジャー固定（NFR 8） |
 | Filament | 採用時点の最新安定版 | 同上。要求 PHP を先に確認（設計 13） |
-| MySQL | Xserver 標準（8.0 系） | utf8mb4 / utf8mb4_unicode_ci |
+| DB エンジン | 本番: MariaDB 10.5 系（Xserver 標準）/ ローカル・CI: MySQL 8.0 | utf8mb4 / utf8mb4_unicode_ci。NULL を unique の重複とみなさない挙動・照合順序は両者で共通のため、本書が前提とする範囲では互換 |
 | Node | 22 系（CI でのビルド用のみ） | 本番には持ち込まない（設計 11.1） |
 
 **バージョンは段階0で確定し、本書の本節を書き換える。** 未確定のまま段階1に進まない。

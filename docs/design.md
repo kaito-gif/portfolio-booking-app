@@ -1,7 +1,7 @@
 # 予約管理システム 基本設計書
 
-- 版: 1.4（2026-08-03 更新。レビュー反映の整合更新）
-- 対象: `docs/requirements.md` 版 1.8
+- 版: 1.5（2026-08-03 更新。11章のデプロイを GitHub Actions による自動デプロイに変更）
+- 対象: `docs/requirements.md` 版 1.9
 - 非機能要件の詳細は `docs/non-functional-requirements.md` を参照
 - カラム定義・シグネチャなどの実装粒度は `docs/detailed-design.md` を参照
 
@@ -381,22 +381,62 @@ Feature テストで次の6つを固める。ここが壊れると業務が壊�
 6. 照会画面のレート制限が効く
 
 Shopify API は `Http::fake()` で差し替える。実 API を叩くテストは書かない。
-GitHub Actions で実行する（第1弾と体裁を揃える）。
+GitHub Actions で実行する（第1弾と体裁を揃える）。CI はローカルと同じ `docker compose` を
+起動して実行し、テストの実行環境をローカルと一致させる。
 
 ---
 
 ## 11. デプロイ
 
-1. ローカルで `composer install --no-dev -o` と `npm run build`
-2. 成果物を転送する（`node_modules` と `.env` は送らない）
-3. サーバー側で `php artisan migrate --force`
-4. `config:cache` / `route:cache` / `view:cache` と Filament の最適化
+### 11.1 流れ
 
-ドキュメントルートはサブドメインの設定で `public` に向ける。
-`.env` と `storage` に web から到達できないことを確認する（要件 7.2）。
-本案件はゼロダウンタイム要件なし。`migrate --force` の瞬断は許容する。
+**GitHub Actions から SSH/rsync で転送する。** 実体は次の5段で、
+`.github/workflows/deploy.yml` と `scripts/deploy/release.sh` に分かれている。
+
+1. **事前チェック** — `ci.yml` を `workflow_call` で呼び、テストと Pint が通ることを確認する
+2. **ビルド** — ランナー上で `composer install --no-dev -o` と `npm run build`
+3. **承認** — `production` 環境の承認待ちで止まる。ここを通すまで本番は変わらない
+4. **転送** — `rsync --delete`。`.env` / `storage` / `public/storage` / `tests` /
+   `docs` / `docker` は送らない
+5. **リリース処理** — サーバー上で `release.sh` を実行し、`migrate --force` →
+   `config:cache` / `route:cache` / `view:cache` / `event:cache` →
+   （存在すれば）`filament:optimize`
+
+最後に `/health` の応答を確認して終わる。**通らなければデプロイジョブを失敗させる。**
+
+### 11.2 なぜこの形か
+
+| 判断 | 理由 |
+|---|---|
+| ローカル転送ではなく CI | 手元の状態（未コミットの変更・ビルド漏れ）が本番に混ざらない |
+| ビルドを CI で行う | Node を本番に持ち込まない制約（要件 8）を守りつつ、手作業を消す |
+| リリース処理をスクリプトに切り出す | 手動デプロイと自動デプロイで同じ手順を実行できる |
+| `production` 環境の承認を挟む | `migrate --force` が人の判断なしに本番へ流れる状態を作らない |
+| `rsync --delete` の前に `artisan` の存在を確認 | 転送先を間違えたときに消してしまうのを防ぐ |
+| `pull_request` を契機にしない | 公開リポジトリのため、fork からの PR に Secrets を渡さない（NFR 7.2） |
+
+**PHP CLI はフルパスで指定する。** 共用サーバーの既定 `php` が 8.3 系とは限らないため、
+`DEPLOY_PHP_BIN` で明示し、`release.sh` はそれを使う。
+
+### 11.3 サーバー側に一度だけ用意するもの
+
+自動デプロイが触らない（＝転送対象外の）ものは、初回に手で用意する。
+
+- `.env`（本番値。リポジトリには入れない）
+- `storage/` 配下と `bootstrap/cache` の書き込み権限、`storage:link`
+- ドキュメントルートを `public` に向ける設定
+- cron（`schedule:run` を毎分）
+- CI 用公開鍵の登録
+
+### 11.4 巻き戻し
+
+**ゼロダウンタイム要件はなく、リリースの世代管理もしない。** 戻すときは
+直前のコミットに戻して再デプロイする。DB は日次バックアップ（NFR 4.3）が最後の手段になるため、
+**破壊的なマイグレーションを流す前だけは手で DB のバックアップを取る**。
+自動化していないのは、共用サーバー上の DB 認証情報をデプロイ経路に通したくないため。
 
 **この手順を段階0で一度通し切る。** まとめてデプロイすると必ず詰まる（要件 10）。
+順序も要件 10 に従い、**手動で1回成功させたあとに自動化に載せる**。
 
 ---
 

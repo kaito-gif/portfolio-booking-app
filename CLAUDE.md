@@ -32,6 +32,8 @@
   - `app/Filament` — 管理画面(Resources / Pages / Widgets)
   - `app/Services/Shopify` — Shopify GraphQL 連携
   - `app/Enums` — 状態は enum + モデルのメソッド経由のみ。`status` の直接代入を禁止
+ - `.github/workflows` — CI(テスト・Pint)と CD(自動デプロイ)。`docs/design.md` 11章
+ - `scripts/deploy` — サーバー上で実行するリリース処理。手動・自動の両方から同じものを呼ぶ
 - ローカル起動: `docker compose up -d`
 
 ## 検証
@@ -49,6 +51,8 @@
 ## 触ってはいけないもの
 
 - 本番/ステージング環境への直接適用、マイグレーションの本番適用、`.env` の本番値
+ (本番反映は GitHub Actions の `production` 環境の承認を経た自動デプロイだけで行う。
+ Claude が SSH で直接本番を操作したり、デプロイを起動したりしない)
 - Shopify の実 API を叩くテスト(必ず `Http::fake()` で差し替える)
 - 屋号・実ドメイン・実在の氏名などの、公開リポジトリに書けない情報
 - シードデータに実在の個人情報を思わせる値を入れない(`docs/requirements.md` 7.2)

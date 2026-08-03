@@ -1,0 +1,131 @@
+name: Deploy
+
+# main への push で本番へ反映する。ただし environment: production の承認を挟むため、
+# 承認するまでマイグレーションは走らない(docs/design.md 11章)。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# デプロイの多重実行を避ける。途中で打ち切ると中途半端な状態が残るため cancel はしない
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: 事前チェック
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: 本番へ反映
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_PHP_BIN: ${{ secrets.DEPLOY_PHP_BIN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PHP 8.3 を用意
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo_mysql, bcmath, intl, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Node を用意
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # composer のスクリプト(package:discover)が artisan を起動するため、
+      # 雛形から .env を作る。この .env は転送対象から除外している
+      - name: ビルド用の .env を用意
+        run: cp .env.example .env
+
+      - name: 本番用の依存をインストール
+        run: composer install --no-dev --no-interaction --prefer-dist --no-progress --optimize-autoloader
+
+      - name: フロントエンドをビルド
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+          npm run build
+
+      - name: SSH の鍵と接続先を用意
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" >~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >~/.ssh/known_hosts
+          else
+            # 未登録の場合はその場で取得する。中間者攻撃を防ぐには
+            # DEPLOY_KNOWN_HOSTS を登録しておくほうがよい
+            ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      # rsync --delete は転送先を間違えると消してしまう。
+      # 初回だけは手で1回デプロイし、疎通を確認してから自動化に載せる方針なので、
+      # artisan の存在を転送先の正しさの判定に使う
+      - name: 転送先を確認
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "test -f '$DEPLOY_PATH/artisan' && test -f '$DEPLOY_PATH/.env'" ||
+            {
+              echo "$DEPLOY_PATH に artisan と .env が見当たりません。初回は手動でデプロイしてください" >&2
+              exit 1
+            }
+
+      - name: 成果物を転送
+        run: |
+          rsync -rlpz --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.env' \
+            --exclude '/node_modules' \
+            --exclude '/storage' \
+            --exclude '/public/storage' \
+            --exclude '/bootstrap/cache/*' \
+            --exclude '/tests' \
+            --exclude '/docs' \
+            --exclude '/docker' \
+            --exclude 'docker-compose.yml' \
+            --exclude 'phpunit.xml' \
+            -e "ssh -i ~/.ssh/id_deploy -p $DEPLOY_PORT" \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: リリース処理を実行
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && PHP_BIN='$DEPLOY_PHP_BIN' bash scripts/deploy/release.sh"
+
+      - name: 公開 URL の応答を確認
+        env:
+          DEPLOY_HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL }}
+        run: |
+          if [ -z "$DEPLOY_HEALTH_URL" ]; then
+            echo 'DEPLOY_HEALTH_URL が未設定のため確認をスキップします'
+            exit 0
+          fi
+          curl --fail --silent --show-error --location --max-time 20 "$DEPLOY_HEALTH_URL" >/dev/null
+
+      - name: 鍵を破棄
+        if: always()
+        run: rm -f ~/.ssh/id_deploy

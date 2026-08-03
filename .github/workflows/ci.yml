@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: テスト・静的チェック
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: .env を用意
+        run: cp .env.example .env
+
+      - name: コンテナを起動
+        run: docker compose up -d --build
+
+      - name: 依存をインストール
+        run: docker compose exec -T app composer install --no-interaction --prefer-dist --no-progress
+
+      - name: アプリケーションキーを生成
+        run: docker compose exec -T app php artisan key:generate
+
+      # DB コンテナの初期化完了を外から確実に判定する手段がないため、
+      # マイグレーション自体を成功するまで再試行して起動待ちを兼ねる
+      - name: マイグレーション(DB の起動を待ちながら)
+        run: |
+          for _ in $(seq 1 30); do
+            if docker compose exec -T app php artisan migrate --force; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'DB に接続できませんでした' >&2
+          docker compose logs db
+          exit 1
+
+      - name: テスト
+        run: docker compose exec -T app php artisan test
+
+      - name: Pint(整形の検査のみ)
+        run: docker compose exec -T app ./vendor/bin/pint --test
+
+      - name: ログを出力(失敗時のみ)
+        if: failure()
+        run: docker compose exec -T app tail -n 200 storage/logs/laravel.log || true

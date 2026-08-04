@@ -10,6 +10,7 @@ use App\Models\Slot;
 use App\Models\User;
 use App\Models\Workshop;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class AdminPanelSmokeTest extends TestCase
@@ -46,6 +47,13 @@ class AdminPanelSmokeTest extends TestCase
         $this->actingAs($admin)->get('/admin/reservations/create')->assertOk();
     }
 
+    public function test_admin_can_view_webhook_events_page(): void
+    {
+        $admin = $this->admin();
+
+        $this->actingAs($admin)->get('/admin/webhook-events')->assertOk();
+    }
+
     public function test_guest_is_redirected_to_login(): void
     {
         $this->get('/admin/reservations')->assertRedirect('/admin/login');
@@ -53,6 +61,19 @@ class AdminPanelSmokeTest extends TestCase
 
     public function test_admin_can_view_populated_reservation_and_slot_lists(): void
     {
+        Http::fake([
+            '*' => Http::response([
+                'data' => [
+                    'inventoryAdjustQuantities' => [
+                        'inventoryAdjustmentGroup' => [
+                            'changes' => [['name' => 'available', 'delta' => -1, 'quantityAfterChange' => 4]],
+                        ],
+                        'userErrors' => [],
+                    ],
+                ],
+            ]),
+        ]);
+
         $admin = $this->admin();
 
         $workshop = Workshop::factory()->create();

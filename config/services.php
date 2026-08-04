@@ -35,4 +35,12 @@ return [
         ],
     ],
 
+    'shopify' => [
+        'shop_domain' => env('SHOPIFY_SHOP_DOMAIN'),
+        'access_token' => env('SHOPIFY_ACCESS_TOKEN'),
+        'webhook_secret' => env('SHOPIFY_WEBHOOK_SECRET'),
+        'api_version' => env('SHOPIFY_API_VERSION'),
+        'location_id' => env('SHOPIFY_LOCATION_ID'),
+    ],
+
 ];

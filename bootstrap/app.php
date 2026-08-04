@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\VerifyShopifyWebhook;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -12,7 +13,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->alias([
+            'shopify.hmac' => VerifyShopifyWebhook::class,
+        ]);
+
+        $middleware->validateCsrfTokens(except: [
+            'webhooks/shopify/*',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

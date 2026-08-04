@@ -6,8 +6,8 @@ use App\Models\Slot;
 use Illuminate\Support\Collection;
 
 /**
- * 段階1時点では未接続（詳細設計7.2）。段階2で Shopify GraphQL を叩く実装
- * （App\Services\Shopify\InventoryService）に差し替える。
+ * 詳細設計7.2。実装は App\Services\Shopify\InventoryService
+ * （Shopify GraphQL を叩く）。AppServiceProvider でバインドする。
  */
 interface InventoryServiceContract
 {

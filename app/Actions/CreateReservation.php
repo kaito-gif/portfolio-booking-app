@@ -38,18 +38,23 @@ final class CreateReservation
         $reservation = DB::transaction(fn () => $this->createPendingReservation($data));
 
         if (! $data->reserveInventory) {
-            $reservation->confirm();
+            // 一意制約違反で既存行が返ってきた場合（Webhookの重複配信）は、
+            // 既に confirmed 済みのことがある。ここで confirm() を無条件に呼ぶと
+            // InvalidStateTransition で落ち、設計5.1が求める「静かな収束」が崩れる。
+            if ($reservation->status === ReservationStatus::InventoryPending) {
+                $reservation->confirm();
 
-            AuditLog::record(
-                action: 'reservation.created',
-                actorLabel: $this->actorLabel($data),
-                auditableType: 'Reservation',
-                auditableId: $reservation->id,
-                changes: $this->reservationSummary($reservation),
-            );
+                AuditLog::record(
+                    action: 'reservation.created',
+                    actorLabel: $this->actorLabel($data),
+                    auditableType: 'Reservation',
+                    auditableId: $reservation->id,
+                    changes: $this->reservationSummary($reservation),
+                );
 
-            if ($data->sendMail) {
-                SendReservationMail::dispatch('confirmed', [$reservation->id], $reservation->email);
+                if ($data->sendMail) {
+                    SendReservationMail::dispatch('confirmed', [$reservation->id], $reservation->email);
+                }
             }
 
             return $reservation;

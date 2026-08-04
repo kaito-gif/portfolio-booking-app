@@ -25,14 +25,19 @@ class ShopifyWebhookTest extends TestCase
         Http::fake();
     }
 
-    private function openSlot(string $variantId, ?Workshop $workshop = null): Slot
+    /**
+     * $numericVariantId は Shopify の legacy 数値ID(Webhook の line_item.variant_id と
+     * 同じ形式)を渡す。保存する shopify_variant_id は GID 形式に正規化する
+     * （resolveInventoryItemId が ID! 引数に GID を要求するため、実運用でも GID で保存する）。
+     */
+    private function openSlot(string $numericVariantId, ?Workshop $workshop = null): Slot
     {
         $slot = Slot::create([
             'workshop_id' => ($workshop ?? Workshop::factory()->create())->id,
             'starts_at' => now()->addDays(10),
             'capacity' => 5,
-            'shopify_variant_id' => $variantId,
-            'shopify_inventory_item_id' => 'inv-'.$variantId,
+            'shopify_variant_id' => "gid://shopify/ProductVariant/{$numericVariantId}",
+            'shopify_inventory_item_id' => 'inv-'.$numericVariantId,
         ]);
         $slot->open();
 
@@ -83,9 +88,9 @@ class ShopifyWebhookTest extends TestCase
 
     public function test_duplicate_webhook_creates_single_reservation(): void
     {
-        $slot = $this->openSlot('variant-1');
+        $slot = $this->openSlot('9001');
         $payload = $this->orderPayload(2001, [
-            ['id' => 5001, 'variant_id' => 'variant-1', 'quantity' => 1],
+            ['id' => 5001, 'variant_id' => 9001, 'quantity' => 1],
         ]);
 
         $this->postWebhook($payload, webhookId: 'wh-dup')->assertStatus(200);
@@ -97,9 +102,9 @@ class ShopifyWebhookTest extends TestCase
 
     public function test_same_order_with_different_webhook_id_is_idempotent(): void
     {
-        $slot = $this->openSlot('variant-1');
+        $slot = $this->openSlot('9001');
         $payload = $this->orderPayload(2002, [
-            ['id' => 5002, 'variant_id' => 'variant-1', 'quantity' => 1],
+            ['id' => 5002, 'variant_id' => 9001, 'quantity' => 1],
         ]);
 
         $this->postWebhook($payload, webhookId: 'wh-a')->assertStatus(200);
@@ -111,9 +116,9 @@ class ShopifyWebhookTest extends TestCase
 
     public function test_quantity_two_creates_two_reservations(): void
     {
-        $slot = $this->openSlot('variant-1');
+        $slot = $this->openSlot('9001');
         $payload = $this->orderPayload(2003, [
-            ['id' => 5003, 'variant_id' => 'variant-1', 'quantity' => 2],
+            ['id' => 5003, 'variant_id' => 9001, 'quantity' => 2],
         ]);
 
         $this->postWebhook($payload)->assertStatus(200);
@@ -128,11 +133,11 @@ class ShopifyWebhookTest extends TestCase
 
     public function test_closed_slot_order_is_skipped_with_reason(): void
     {
-        $slot = $this->openSlot('variant-1');
+        $slot = $this->openSlot('9001');
         $slot->close();
 
         $payload = $this->orderPayload(2004, [
-            ['id' => 5004, 'variant_id' => 'variant-1', 'quantity' => 1],
+            ['id' => 5004, 'variant_id' => 9001, 'quantity' => 1],
         ]);
 
         $this->postWebhook($payload)->assertStatus(200);
@@ -146,10 +151,10 @@ class ShopifyWebhookTest extends TestCase
 
     public function test_mixed_order_creates_reservations_only_for_slots(): void
     {
-        $slot = $this->openSlot('variant-1');
+        $slot = $this->openSlot('9001');
         $payload = $this->orderPayload(2005, [
-            ['id' => 5005, 'variant_id' => 'variant-1', 'quantity' => 1],
-            ['id' => 5006, 'variant_id' => 'variant-goods-not-a-slot', 'quantity' => 1],
+            ['id' => 5005, 'variant_id' => 9001, 'quantity' => 1],
+            ['id' => 5006, 'variant_id' => 9099, 'quantity' => 1],
         ]);
 
         $this->postWebhook($payload)->assertStatus(200);
@@ -161,11 +166,37 @@ class ShopifyWebhookTest extends TestCase
         $this->assertNotNull($event->failure_reason);
     }
 
+    public function test_webhook_line_item_variant_id_matches_gid_stored_slot(): void
+    {
+        // Shopify の実 Webhook は line_item.variant_id を legacy 数値IDで送ってくる一方、
+        // slots.shopify_variant_id は GID 形式で保存する運用（詳細設計7.2）。
+        // 数値のまま突き合わせると一致せず skip になっていたため、正規化されていることを確認する。
+        $slot = Slot::create([
+            'workshop_id' => Workshop::factory()->create()->id,
+            'starts_at' => now()->addDays(10),
+            'capacity' => 5,
+            'shopify_variant_id' => 'gid://shopify/ProductVariant/123456789',
+            'shopify_inventory_item_id' => 'inv-123456789',
+        ]);
+        $slot->open();
+
+        $payload = $this->orderPayload(2007, [
+            ['id' => 5007, 'variant_id' => 123456789, 'quantity' => 1],
+        ]);
+
+        $this->postWebhook($payload)->assertStatus(200);
+
+        $this->assertSame(1, Reservation::where('slot_id', $slot->id)->count());
+
+        $event = WebhookEvent::sole();
+        $this->assertTrue($event->status === WebhookStatus::Processed);
+    }
+
     public function test_webhook_fails_when_line_item_id_missing(): void
     {
-        $this->openSlot('variant-1');
+        $this->openSlot('9001');
         $payload = $this->orderPayload(2006, [
-            ['variant_id' => 'variant-1', 'quantity' => 1],
+            ['variant_id' => 9001, 'quantity' => 1],
         ]);
 
         $this->postWebhook($payload)->assertStatus(200);

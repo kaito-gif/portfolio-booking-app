@@ -43,7 +43,9 @@ final class ImportOrderReservations
             $variantId = isset($lineItem['variant_id']) ? (string) $lineItem['variant_id'] : null;
             $quantity = (int) ($lineItem['quantity'] ?? 0);
 
-            $slot = $variantId === null ? null : Slot::query()->where('shopify_variant_id', $variantId)->first();
+            $slot = $variantId === null ? null : Slot::query()
+                ->where('shopify_variant_id', $this->toVariantGid($variantId))
+                ->first();
 
             if ($slot === null) {
                 $skipReasons[] = "line_item#{$lineItemId}: 開催枠に紐づかないバリアント（物販等）";
@@ -116,6 +118,21 @@ final class ImportOrderReservations
             // 一部 line item が対象外でも、その理由は failure_reason に残す（設計5.2）
             reason: $skipReasons === [] ? null : implode(' / ', $skipReasons),
         );
+    }
+
+    /**
+     * 注文 Webhook の line_item.variant_id は数値の legacy ID で届く一方、
+     * slots.shopify_variant_id は GraphQL の GID 形式（gid://shopify/ProductVariant/...）
+     * で保存する運用（resolveInventoryItemId が ID! 引数に GID を要求するため）。
+     * 数値のまま突き合わせると実運用の注文が常に対象外(skip)になってしまうため正規化する。
+     */
+    private function toVariantGid(string $variantId): string
+    {
+        if (str_starts_with($variantId, 'gid://')) {
+            return $variantId;
+        }
+
+        return "gid://shopify/ProductVariant/{$variantId}";
     }
 
     private function customerName(array $orderPayload): string

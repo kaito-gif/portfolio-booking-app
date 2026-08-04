@@ -32,9 +32,15 @@
     (Filament のフォーム・ジョブ・コントローラに業務ロジックを書かない)
   - `app/Filament/Admin/Resources` — 管理画面(Filament v5 はパネルごとに名前空間を切る。
     Resource本体とは別に `Schemas/`(フォーム)・`Tables/`(一覧)・`Pages/` に分割される)
+  - `app/Filament/Admin/Pages` — Resourceに紐づかないカスタムページ(`WebhookEvents` など)
   - `app/Contracts` — `InventoryServiceContract` など、段階をまたいで差し替える境界
-  - `app/Services/Shopify` — Shopify GraphQL 連携。段階1時点では `FakeInventoryService` を
-    `AppServiceProvider` で仮バインドしている(段階2で実装に差し替え。`docs/context.md` 参照)
+  - `app/Services/Shopify` — Shopify GraphQL 連携(`ShopifyClient` / `InventoryService`)。
+    段階2で実装に差し替え済み(`AppServiceProvider` でバインド)。テストは必ず
+    `Http::fake()` で差し替える(実 API を叩くテストは書かない)
+  - `app/Http/Middleware/VerifyShopifyWebhook` — Webhook の HMAC 検証(raw bodyに対して計算)。
+    `app/Http/Controllers/Webhooks` — Webhook受信コントローラ
+  - `app/Jobs` — `ProcessShopifyOrder`(注文取り込み)・`AdjustShopifyInventory`(在庫調整)・
+    `SendReservationMail`(現状 `mail_logs` に `queued` 行を作るところまで。実送信は段階3)
   - `app/Enums` — 状態は enum + モデルのメソッド経由のみ。`status` の直接代入を禁止
     (モデル内の遷移メソッドでも `update()` ではなく `$this->status = ...; $this->save();`
     を使うこと。`status` は `#[Fillable]` に含めていないため `update()` は無視される)

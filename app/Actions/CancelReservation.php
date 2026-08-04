@@ -60,7 +60,13 @@ final class CancelReservation
             throw new ReservationNotCancellableException("Reservation#{$reservation->id} はキャンセル期限を過ぎています");
         }
 
-        if ($by === CancelledBy::Staff && $reservation->status !== ReservationStatus::Confirmed) {
+        // staff の権限は customer と同じ「確定状態かつ期限内」まで（要件4.3・詳細設計11.1）。
+        // 期限を過ぎた予約のキャンセルは admin のみ許可する。
+        if ($by === CancelledBy::Staff && ! $reservation->isCancellableByCustomer()) {
+            throw new ReservationNotCancellableException("Reservation#{$reservation->id} は確定状態でないか、キャンセル期限を過ぎているためスタッフは操作できません（管理者のみ操作可）");
+        }
+
+        if ($by === CancelledBy::Admin && $reservation->status !== ReservationStatus::Confirmed) {
             throw new ReservationNotCancellableException("Reservation#{$reservation->id} は確定状態ではないためキャンセルできません");
         }
     }

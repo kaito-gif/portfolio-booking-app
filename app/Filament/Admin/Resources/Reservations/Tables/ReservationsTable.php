@@ -93,13 +93,24 @@ class ReservationsTable
                     ->label('キャンセル')
                     ->icon(Heroicon::OutlinedXCircle)
                     ->color('danger')
-                    ->visible(fn (Reservation $record) => $record->status === ReservationStatus::Confirmed)
+                    ->visible(function (Reservation $record) {
+                        if ($record->status !== ReservationStatus::Confirmed) {
+                            return false;
+                        }
+
+                        // 期限切れ予約のキャンセルは admin のみ（要件4.3・詳細設計11.1）。
+                        return Auth::user()->isAdmin() || $record->isCancellableByCustomer();
+                    })
                     ->requiresConfirmation()
-                    ->action(fn (Reservation $record) => app(CancelReservation::class)->execute(
-                        reservation: $record,
-                        by: CancelledBy::Staff,
-                        actor: Auth::user(),
-                    )),
+                    ->action(function (Reservation $record) {
+                        $actor = Auth::user();
+
+                        app(CancelReservation::class)->execute(
+                            reservation: $record,
+                            by: $actor->isAdmin() ? CancelledBy::Admin : CancelledBy::Staff,
+                            actor: $actor,
+                        );
+                    }),
             ])
             ->headerActions([
                 Action::make('exportCsv')

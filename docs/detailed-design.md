@@ -393,7 +393,7 @@ final class CancelReservation
     /** @throws ReservationNotCancellableException */
     public function execute(
         Reservation $reservation,
-        CancelledBy $by,        // customer / staff / system
+        CancelledBy $by,        // customer / staff / admin / system
         ?User $actor = null,
         bool $restoreInventory = true,   // system rollback では false
         bool $sendCancelledMail = true,  // system rollback では false
@@ -406,7 +406,10 @@ final class CancelReservation
 ```
 1. 権限と期限の検査
      - $by === customer のとき $reservation->isCancellableByCustomer() が必須
-     - $by === staff のとき status === Confirmed のみ（期限は問わない・要件 4.3）
+     - $by === staff のときも isCancellableByCustomer() 相当（status === Confirmed
+       かつ期限内）が必須。期限切れ予約のキャンセルは admin のみ許可する
+       （要件 4.3・11.1 権限表）
+     - $by === admin のとき status === Confirmed のみ（期限は問わない）
      - $by === system は**内部ロールバック専用モード**
        （Webhook 取り込み中の巻き戻し。顧客導線では使わない）
 2. トランザクション開始

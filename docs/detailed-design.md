@@ -640,7 +640,7 @@ final class InventoryService
 |---|---|---|---|---|---|
 | `ProcessShopifyOrder` | `default` | 5 | 60, 300, 900, 1800, 3600 | 60 | `webhook_events.status=failed` + 管理者へ通知 |
 | `AdjustShopifyInventory` | `priority` | 5 | 60, 300, 900, 1800, 3600 | 30 | `audit_logs` に記録 + 通知 |
-| `SendReservationMail` | `default` | 3 | 60, 300, 900 | 30 | `mail_logs.status=failed` + 通知 |
+| `SendReservationMail` | `default` | 1（自動再送なし） | — | 30 | `mail_logs.status=failed`（+ 通知は段階5） |
 
 `queue:work` は `--queue=priority,default` で起動し、**補償の在庫戻しを先に流す**。
 
@@ -650,8 +650,13 @@ final class InventoryService
   （`SerializesModels` は日次リセットで消えた行を復元できず、失敗ジョブの再実行が壊れる）
 - 実行冒頭で対象行の存在を確認し、無ければ**成功として終える**（リセット後の残骸対策）
 - `failed(Throwable $e)` で状態更新と通知を行う。**通知はここ1箇所に集約する**
+  （`SendReservationMail` は例外。下記）
 - `WithoutOverlapping` は使わない。キュー実行自体が `withoutOverlapping()` の
   スケジューラ配下で直列化されているため（設計 9）
+
+**`SendReservationMail` だけ `handle()` 内で例外を捕捉し、再送出しない**（8.4）。
+自動再送をしない設計（設計 7.1）のため `failed()` を使う必要がなく、
+`$tries` も既定の1のまま。他の2ジョブとは失敗時の経路が異なる。
 
 ### 8.2 `ProcessShopifyOrder`
 
@@ -685,16 +690,25 @@ handle(int $slotId, int $delta, string $reason, ?int $reservationId):
 ### 8.4 `SendReservationMail`
 
 ```
-handle(string $type, array $reservationIds, string $to):
-  1. mail_logs に status=queued で行を作る（初回のみ。再試行時は既存行を更新）
-  2. Mailable をレンダリングし body を保存
-  3. Mail::send。成功で status=sent / sent_at
-  4. 例外時は attempts++ と last_error を保存して再送出
+handle(string $type, array $reservationIds, string $to, ?int $existingMailLogId):
+  1. reservationIds から対象の予約を取得。0件なら何もせず終える（リセット後の残骸対策）
+  2. type に応じた Mailable を組み立てる（confirmed→複数予約可 / reminder・cancelled→単一予約）
+  3. existingMailLogId が null なら mail_logs に status=queued で新規行を作る。
+     null でなければその行を再利用する（再送時。新しい行を作らない）
+  4. Mailable をレンダリングし、body に保存
+  5. Mail::send。成功なら status=sent / sent_at / attempts++ / last_error=null
+  6. 例外時は status=failed / attempts++ / last_error を保存し、ログに残す。
+     **例外は再送出しない**（7.1のとおり自動再送はしないため）
 ```
 
 **本文を保存してから送る。** 送信後に保存すると、送信は成功したのに
 プレビューが空という状態が起き得る。デモでは**画面で見せられること**が
 実送信より重要（設計7）なので、保存を先に置く。
+
+**失敗時に例外を再送出しない。** 他の2ジョブ（8.2・8.3）は再送出してキューに
+再試行させるが、メールは失敗しても業務データが壊れないため、**即座に
+`mail_logs.status=failed` にして画面に出し、`MailLogs` からの手動再送に委ねる**
+（設計 7.1）。この判断により `$tries` / `backoff` は設定していない（8章の表）。
 
 ---
 
@@ -1060,6 +1074,7 @@ Shopify API は `Http::fake()`。実 API を叩くテストは書かない（NFR
 | 設計 9 | `demo:reset` の在庫上書きを `capacity - 確定予約数` に修正 | そのままだとリセット直後に差分が全枠出る（15.1） |
 | 要件 6.2 | `Open → Completed` の直行を不可と明示 | 締切を経ない場合の Webhook の扱いが未定義になる（4.2） |
 | NFR 6.3 | 在庫差分ウィジェットは `cache` を読む（画面から API を叩かない） | 同時閲覧でレート制限に触れる（11.6） |
+| 設計 7.1 | `SendReservationMail` の自動再送（`tries=3`）を廃止し、失敗即 `mail_logs.status=failed` + 手動再送のみに変更 | メール失敗は在庫等と違い業務データを壊さないため、待たせるより即座に画面へ出すほうが分かりやすい（8.1・8.4） |
 
 ---
 

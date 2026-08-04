@@ -30,9 +30,20 @@
 - 主要ディレクトリ(実装が進み次第この節を更新する):
   - `app/Actions` — 業務ロジックを集約。予約の作成・キャンセルは**どの経路からもここだけを呼ぶ**
     (Filament のフォーム・ジョブ・コントローラに業務ロジックを書かない)
-  - `app/Filament` — 管理画面(Resources / Pages / Widgets)
-  - `app/Services/Shopify` — Shopify GraphQL 連携
+  - `app/Filament/Admin/Resources` — 管理画面(Filament v5 はパネルごとに名前空間を切る。
+    Resource本体とは別に `Schemas/`(フォーム)・`Tables/`(一覧)・`Pages/` に分割される)
+  - `app/Contracts` — `InventoryServiceContract` など、段階をまたいで差し替える境界
+  - `app/Services/Shopify` — Shopify GraphQL 連携。段階1時点では `FakeInventoryService` を
+    `AppServiceProvider` で仮バインドしている(段階2で実装に差し替え。`docs/context.md` 参照)
   - `app/Enums` — 状態は enum + モデルのメソッド経由のみ。`status` の直接代入を禁止
+    (モデル内の遷移メソッドでも `update()` ではなく `$this->status = ...; $this->save();`
+    を使うこと。`status` は `#[Fillable]` に含めていないため `update()` は無視される)
+  - `app/Exceptions` — ドメイン例外(`InvalidStateTransition` など。詳細設計 5.5)
+  - `app/Policies` — Filament の Create/Edit/Delete(Bulk含む)の表示・可否を自動制御する
+    (詳細設計11.1)。Workshop/Slot/Reservation のみ段階1で前倒し実装済み。
+    User(デモユーザー保護)は段階5で追加予定(`docs/context.md` 参照)。
+    一括削除の業務ルールは Table 側の `visible()` ではなく Policy の `delete()` に書き、
+    `DeleteBulkAction::make()->authorizeIndividualRecords('delete')` で効かせる
  - `.github/workflows` — CI(テスト・Pint)と CD(自動デプロイ)。`docs/design.md` 11章
  - `scripts/deploy` — サーバー上で実行するリリース処理。手動・自動の両方から同じものを呼ぶ
 - ローカル起動: `docker compose up -d`
@@ -61,4 +72,15 @@
 
 ## Claudeがやりがちなミス
 
-(まだ空。訂正を受けたら `/fixmd` の実行を提案する)
+- 「最新安定版を入れる」際にバージョン指定を省略・緩くすると、学習知識ベースの
+  古いメジャーバージョンを引いてしまう。`composer require <pkg>` の前に
+  `composer show -a <pkg>` 等で実際の最新メジャーを確認してから指定すること
+  (2026-08-04、Filament を `^3.3` で入れてしまい v5 系と食い違った)
+- モデルの状態遷移メソッド内で `$this->update(['status' => ...])` を使うと、
+  `status` が `#[Fillable]` に含まれていない(直接代入を禁止する設計のため)ことで
+  マスアサインメント保護に黙って弾かれ、何も変わらない。遷移メソッド内では
+  `$this->status = ...; $this->save();` のように直接プロパティへ代入すること
+  (2026-08-04)
+- Carbon の `diffInSeconds()` は既定で符号付き(過去日時を渡すと負の値)を返す。
+  経過秒数がほしいだけなら `diffInSeconds($other, absolute: true)` を明示すること
+  (2026-08-04、`/health` の stale 判定で符号を見落として一度テストが落ちた)

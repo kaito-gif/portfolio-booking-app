@@ -8,12 +8,12 @@ use Tests\TestCase;
 class ExampleTest extends TestCase
 {
     /**
-     * A basic test example.
+     * `/` は `/admin` へリダイレクトする（詳細設計9章のルート表）。
      */
-    public function test_the_application_returns_a_successful_response(): void
+    public function test_the_application_redirects_home_to_admin(): void
     {
         $response = $this->get('/');
 
-        $response->assertStatus(200);
+        $response->assertRedirect('/admin');
     }
 }

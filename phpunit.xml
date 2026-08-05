@@ -44,6 +44,8 @@
         <env name="SHOPIFY_WEBHOOK_SECRET" value="test-webhook-secret"/>
         <env name="SHOPIFY_API_VERSION" value="2026-01"/>
         <env name="SHOPIFY_LOCATION_ID" value="gid://shopify/Location/1"/>
+        <!-- demo:reset は最大22枠(15日x1〜2枠)を生成するため、それを上回る数を用意する -->
+        <env name="BOOKING_DEMO_SLOT_VARIANT_IDS" value="gid://shopify/ProductVariant/1,gid://shopify/ProductVariant/2,gid://shopify/ProductVariant/3,gid://shopify/ProductVariant/4,gid://shopify/ProductVariant/5,gid://shopify/ProductVariant/6,gid://shopify/ProductVariant/7,gid://shopify/ProductVariant/8,gid://shopify/ProductVariant/9,gid://shopify/ProductVariant/10,gid://shopify/ProductVariant/11,gid://shopify/ProductVariant/12,gid://shopify/ProductVariant/13,gid://shopify/ProductVariant/14,gid://shopify/ProductVariant/15,gid://shopify/ProductVariant/16,gid://shopify/ProductVariant/17,gid://shopify/ProductVariant/18,gid://shopify/ProductVariant/19,gid://shopify/ProductVariant/20,gid://shopify/ProductVariant/21,gid://shopify/ProductVariant/22,gid://shopify/ProductVariant/23,gid://shopify/ProductVariant/24,gid://shopify/ProductVariant/25"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>

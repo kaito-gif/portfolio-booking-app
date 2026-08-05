@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Contracts\InventoryServiceContract;
 use App\Models\AuditLog;
 use App\Models\Slot;
+use App\Support\AdminNotifier;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Throwable;
@@ -58,7 +59,7 @@ class AdjustShopifyInventory implements ShouldQueue
         );
     }
 
-    /** 最終失敗時。通知(14章)は段階5で実装するため、ここでは監査ログのみ残す。 */
+    /** 詳細設計14章。最終失敗時は監査ログに加えて管理者へ通知する。 */
     public function failed(Throwable $e): void
     {
         AuditLog::record(
@@ -71,6 +72,13 @@ class AdjustShopifyInventory implements ShouldQueue
                 'reservation_id' => $this->reservationId,
                 'error' => $e->getMessage(),
             ],
+        );
+
+        AdminNotifier::notify(
+            suppressionKey: "inventory:{$this->slotId}",
+            subject: '【chanoka】在庫更新が失敗しました',
+            bodyText: "Slot#{$this->slotId} の在庫更新（delta={$this->delta}、reason={$this->reason}）が最終的に失敗しました。\n{$e->getMessage()}",
+            adminUrl: url("/admin/slots/{$this->slotId}/edit"),
         );
     }
 }

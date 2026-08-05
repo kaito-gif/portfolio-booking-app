@@ -23,8 +23,8 @@ class HealthCheckController extends Controller
         $lastRunAt = Cache::get('schedule.last_run_at');
 
         if ($lastRunAt === null) {
-            // schedule.last_run_at を書き込むバッチコマンドが未実装のため、
-            // 現時点では「まだハートビートが無い」= ok として扱う（docs/context.md 参照）。
+            // schedule:heartbeat（段階5で実装）がまだ一度も走っていない状態
+            // （デプロイ直後等）。この間は stale と区別できないため ok として扱う。
             return response()->json([
                 'status' => 'ok',
                 'schedule_last_run_at' => null,

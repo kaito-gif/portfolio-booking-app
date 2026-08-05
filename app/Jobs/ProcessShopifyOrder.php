@@ -5,10 +5,12 @@ namespace App\Jobs;
 use App\Actions\ImportOrderReservations;
 use App\Enums\WebhookStatus;
 use App\Models\WebhookEvent;
+use App\Support\AdminNotifier;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use RuntimeException;
+use Throwable;
 
 /**
  * 詳細設計8.2。webhook_events を注文取り込みまで進める。
@@ -72,5 +74,16 @@ class ProcessShopifyOrder implements ShouldQueue
         if ($result->status === WebhookStatus::Failed) {
             throw new RuntimeException($result->reason ?? "WebhookEvent#{$event->id} の処理に失敗しました");
         }
+    }
+
+    /** 詳細設計14章。再試行を使い切って最終的に失敗したときだけ通知する。 */
+    public function failed(Throwable $e): void
+    {
+        AdminNotifier::notify(
+            suppressionKey: "webhook:{$this->webhookEventId}",
+            subject: '【chanoka】Webhook処理が失敗しました',
+            bodyText: "WebhookEvent#{$this->webhookEventId} の処理が最終的に失敗しました。\n{$e->getMessage()}",
+            adminUrl: url('/admin/webhook-events'),
+        );
     }
 }

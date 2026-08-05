@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
@@ -40,5 +41,14 @@ class HealthCheckTest extends TestCase
         $this->get('/health')
             ->assertStatus(503)
             ->assertJson(['status' => 'stale']);
+    }
+
+    public function test_schedule_heartbeat_command_makes_health_ok(): void
+    {
+        Cache::forget('schedule.last_run_at');
+
+        Artisan::call('schedule:heartbeat');
+
+        $this->get('/health')->assertOk()->assertJson(['status' => 'ok']);
     }
 }

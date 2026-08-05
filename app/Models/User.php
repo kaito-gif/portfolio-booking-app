@@ -13,12 +13,22 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-#[Fillable(['name', 'email', 'password'])]
+#[Fillable(['name', 'email', 'password', 'role'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
+
+    /**
+     * DBのdefault(role='staff', is_demo=false)はinsert時にしか効かず、
+     * create()直後のインメモリなモデルには反映されない（要refresh）ため、
+     * ここでも明示しておく（Reservation/Slotのstatus初期値と同じ理由）。
+     */
+    protected $attributes = [
+        'role' => 'staff',
+        'is_demo' => false,
+    ];
 
     /**
      * Get the attributes that should be cast.

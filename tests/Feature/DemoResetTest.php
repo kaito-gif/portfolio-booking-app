@@ -1,0 +1,103 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\AuditLog;
+use App\Models\Reservation;
+use App\Models\Slot;
+use App\Models\User;
+use App\Models\Workshop;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Http;
+use Tests\TestCase;
+
+/**
+ * 詳細設計16.1 #13: demo_reset_is_idempotent_and_leaves_no_drift。
+ */
+class DemoResetTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private function fakeShopify(): void
+    {
+        Http::fake(function ($request) {
+            $query = (string) ($request->data()['query'] ?? '');
+
+            if (str_contains($query, 'productVariant')) {
+                return Http::response([
+                    'data' => ['productVariant' => ['inventoryItem' => ['id' => 'gid://shopify/InventoryItem/1']]],
+                ]);
+            }
+
+            if (str_contains($query, 'inventorySetQuantities')) {
+                return Http::response(['data' => ['inventorySetQuantities' => ['userErrors' => []]]]);
+            }
+
+            return Http::response(['data' => []]);
+        });
+    }
+
+    public function test_demo_reset_is_idempotent_and_leaves_no_drift(): void
+    {
+        $this->fakeShopify();
+
+        Artisan::call('demo:reset');
+
+        $workshopsFirst = Workshop::count();
+        $slotsFirst = Slot::count();
+        $usersFirst = User::count();
+        $this->assertSame(3, $workshopsFirst);
+        $this->assertGreaterThan(0, $slotsFirst);
+        $this->assertSame(2, $usersFirst);
+
+        // audit_logs は demo:reset をまたいで残る(15.1)ため、2回目の分だけを見る必要がある。
+        // created_at(秒精度)は2回の実行が同一秒内に収まるとテスト環境では区別できない
+        // ため、IDを基準にする。TRUNCATEでslotsのauto_incrementが振り出しに戻るため、
+        // 1回目のログをそのまま混ぜて検証すると別の枠を指してしまう。
+        $lastIdBeforeSecondRun = (int) (AuditLog::query()->max('id') ?? 0);
+        Artisan::call('demo:reset');
+
+        $this->assertSame($workshopsFirst, Workshop::count());
+        $this->assertSame($slotsFirst, Slot::count());
+        $this->assertSame($usersFirst, User::count());
+
+        // 差分0: inventory.reset の後値が capacity - 確定予約数 と一致すること
+        // （resetInventory が set() に渡す値そのものであり、ここではその整合性を再検証する）。
+        $resetLogs = AuditLog::query()
+            ->where('action', 'inventory.reset')
+            ->where('id', '>', $lastIdBeforeSecondRun)
+            ->get();
+        $this->assertNotEmpty($resetLogs);
+
+        foreach ($resetLogs as $log) {
+            $slot = Slot::find($log->auditable_id);
+            $this->assertNotNull($slot);
+            $expected = max(0, $slot->capacity - $slot->confirmedCount());
+            $this->assertSame($expected, $log->changes['after']);
+        }
+    }
+
+    public function test_demo_reset_dry_run_does_not_modify_data(): void
+    {
+        $this->fakeShopify();
+        Artisan::call('demo:reset');
+        $slotsBefore = Slot::count();
+
+        Artisan::call('demo:reset', ['--dry-run' => true]);
+
+        $this->assertSame($slotsBefore, Slot::count());
+    }
+
+    public function test_demo_reset_refuses_to_run_in_production(): void
+    {
+        app()['env'] = 'production';
+
+        Artisan::call('demo:reset');
+
+        $this->assertSame(0, Workshop::count());
+        $this->assertSame(0, Reservation::count());
+
+        app()['env'] = 'testing';
+    }
+}

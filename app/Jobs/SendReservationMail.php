@@ -7,6 +7,7 @@ use App\Mail\ReservationConfirmedMail;
 use App\Mail\ReservationReminderMail;
 use App\Models\MailLog;
 use App\Models\Reservation;
+use App\Support\AdminNotifier;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Mail\Mailable;
@@ -78,6 +79,13 @@ class SendReservationMail implements ShouldQueue
                 'type' => $this->type,
                 'error' => $e->getMessage(),
             ]);
+
+            AdminNotifier::notify(
+                suppressionKey: "mail:{$mailLog->id}",
+                subject: '【chanoka】メール送信が失敗しました',
+                bodyText: "MailLog#{$mailLog->id}（type={$this->type}、宛先={$this->to}）の送信が失敗しました。\n{$e->getMessage()}",
+                adminUrl: url('/admin/mail-logs'),
+            );
         }
     }
 

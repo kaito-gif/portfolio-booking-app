@@ -31,7 +31,10 @@ final class ShopifyClient
                 ->connectTimeout(5)
                 ->timeout(10)
                 ->retry(3, fn (int $attempt, Throwable $e) => $this->retryDelayMs($e), fn (Throwable $e) => $this->isRetryable($e))
-                ->post('/graphql.json', ['query' => $query, 'variables' => $variables]);
+                // 変数無しのクエリで $variables=[] のまま渡すと JSON化で配列([])になり、
+                // Shopify側がオブジェクトを期待して「Invalid variables parameter」で
+                // 拒否する。空のときだけオブジェクトとして送る。
+                ->post('/graphql.json', ['query' => $query, 'variables' => $variables === [] ? (object) [] : $variables]);
         } catch (ConnectionException|RequestException $e) {
             throw new ShopifyApiException('Shopify APIへの接続に失敗しました', previous: $e);
         }

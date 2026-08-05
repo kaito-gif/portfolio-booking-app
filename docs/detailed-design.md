@@ -580,14 +580,26 @@ final class InventoryService
 | メソッド | mutation / query | 備考 |
 |---|---|---|
 | `resolveInventoryItemId` | `query { productVariant(id:) { inventoryItem { id } } }` | 枠の保存時のみ |
-| `adjust` | `inventoryAdjustQuantities`（`name: "available"`, `reason: "correction"`） | delta 指定。**現在値を読んでから書かない**（競合するため） |
-| `set` | `inventorySetQuantities`（`ignoreCompareQuantity: true`） | リセット時のみ絶対値で上書き |
+| `adjust` | `inventoryAdjustQuantities`（`name: "available"`, `reason: "correction"`） | delta 指定 |
+| `set` | `inventorySetQuantities` | リセット時のみ絶対値で上書き |
 | `fetchAvailable` | `query { nodes(ids: [...]) { ... on InventoryItem { inventoryLevel(locationId:) { quantities(names:["available"]) { quantity } } } } }` | **1回50件までまとめる** |
 
-`adjust` で delta を使うのは、read-modify-write にすると
-**手動登録と Webhook が同時に走ったときに片方の更新が消える**ため。
-`set` を `demo:reset` に限定するのも同じ理由で、絶対値での書き込みは
-他の更新を踏み潰す操作だと明示しておく。
+**2026-08-05、実クレデンシャル(`chanoka-demo`)での疎通確認で判明し、上記2点を修正した。**
+設計時点では「delta/絶対値だけを渡す薄いAPI」を想定していたが、実際のスキーマ
+(API version 2026-07)では両ミューテーションとも `changeFromQuantity`(比較対象の
+現在値)が必須になっており、さらにフィールドへ `@idempotent(key: $key)` ディレクティブ
+（`String!` のキー引数必須）が無いと「ディレクティブが必要」エラーで拒否される。
+このため `adjust`/`set` はいずれも **現在値の読み取り→書き込みの2往復**になる
+(`InventoryService::currentAvailable()`)。旧設計が避けようとした「read-modify-write
+による競合」は、読み取りと書き込みの間に他の更新が挟まった場合は
+`changeFromQuantity` の不一致で **userErrors として書き込みが拒否される**形で
+API 側が担保するようになっており、当時の懸念(片方の更新が静かに消える)は
+むしろ解消されている。失敗時はジョブの再試行(8.3)に委ねる。
+
+あわせて、`inventoryAdjustQuantities` のレスポンスの `changes[].quantityAfterChange`
+は型上は存在するが実際には常に `null` を返す(おそらく非同期処理のため)。
+`InventoryService::adjust()` はこの値を信用せず、`userErrors` が空であることを
+根拠に `現在値 + delta` を自前で返している。
 
 `fetchAvailable` をまとめるのは、開催枠数 × 96 回/日の呼び出しを
 実質「バッチ回数 × 数回」に落とすため（NFR 6.3 の見積もりの根拠）。
@@ -1082,8 +1094,11 @@ Shopify API は `Http::fake()`。実 API を叩くテストは書かない（NFR
 
 上位文書から引き継ぐもの（NFR 12・設計 13）に加えて、本書で残ったもの。
 
-- **Shopify Admin API のバージョン**（7.4）。採用時点の安定版を `.env` に置く
-- `inventoryAdjustQuantities` の `reason` に使える値。API バージョンで変わるため、
-  段階2の実装時に実 API のスキーマで確認する
+- ~~Shopify Admin API のバージョン（7.4）~~ → 2026-08-05、実クレデンシャルで
+  `2026-07` を採用して解決(`.env` の `SHOPIFY_API_VERSION`)
+- ~~`inventoryAdjustQuantities` の `reason` に使える値~~ → 2026-08-05、実APIで確認。
+  `reason` は enum ではなく自由記述の `String!` のため `"correction"` で問題ない。
+  ただし別の想定外(`changeFromQuantity` 必須・`@idempotent` ディレクティブ必須)が
+  見つかり7.2を修正した(詳細は7.2参照)
 - Xserver の SMTP 送信数上限。上限次第でリマインドの送信間隔を分散させる（NFR 12）
-- 会場案内・持ち物などメール本文の固定文言（12章）
+- 会場案内・持ち物などメール本文の固定文言（12章。段階3で暫定の汎用文言に確定済み）

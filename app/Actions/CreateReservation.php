@@ -81,8 +81,7 @@ final class CreateReservation
         try {
             $reservation->confirm();
         } catch (Throwable $e) {
-            AdjustShopifyInventory::dispatch($data->slot->id, 1, 'compensation', $reservation->id)
-                ->onQueue('priority');
+            AdjustShopifyInventory::dispatch($data->slot->id, 1, 'compensation', $reservation->id);
 
             AuditLog::record(
                 action: 'inventory.compensated',

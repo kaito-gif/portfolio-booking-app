@@ -43,7 +43,7 @@ class Reservation extends Model
 
     public function lookupUrl(): string
     {
-        return url('/reservations/lookup?code='.$this->code);
+        return route('lookup.form', ['code' => $this->code]);
     }
 
     public function confirm(): void

@@ -406,7 +406,7 @@ GitHub Actions で実行する（第1弾と体裁を揃える）。CI はロー�
 4. **転送** — `rsync --delete`。`.env` / `storage` / `public/storage` / `tests` /
    `docs` / `docker` は送らない
 5. **リリース処理** — サーバー上で `release.sh` を実行し、`migrate --force` →
-   `config:cache` / `route:cache` / `view:cache` / `event:cache` →
+   `config:cache` / `route:cache` / `event:cache` →
    （存在すれば）`filament:optimize`
 
 最後に `/health` の応答を確認して終わる。**通らなければデプロイジョブを失敗させる。**
@@ -421,6 +421,7 @@ GitHub Actions で実行する（第1弾と体裁を揃える）。CI はロー�
 | `production` 環境の承認を挟む | `migrate --force` が人の判断なしに本番へ流れる状態を作らない |
 | `rsync --delete` の前に `artisan` の存在を確認 | 転送先を間違えたときに消してしまうのを防ぐ |
 | `pull_request` を契機にしない | 公開リポジトリのため、fork からの PR に Secrets を渡さない（NFR 7.2） |
+| `view:cache` を使わない | Filament のページコンポーネント（`filament-panels::page` 等）は現在アクティブなパネルというランタイムコンテキストに依存して解決されるため、リクエスト外で全 Blade ビューを一括コンパイルする `view:cache` と相性が悪く例外で落ちる。ビューは初回リクエスト時に自動コンパイルされるため実害はない（2026-08-06、本番デプロイの失敗で判明） |
 
 **PHP CLI はフルパスで指定する。** 共用サーバーの既定 `php` が 8.3 系とは限らないため、
 `DEPLOY_PHP_BIN` で明示し、`release.sh` はそれを使う。

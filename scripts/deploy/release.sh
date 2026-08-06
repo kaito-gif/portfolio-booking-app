@@ -24,8 +24,14 @@ echo '==> マイグレーション'
 echo '==> キャッシュを再構築'
 "$PHP_BIN" artisan config:cache
 "$PHP_BIN" artisan route:cache
-"$PHP_BIN" artisan view:cache
 "$PHP_BIN" artisan event:cache
+
+# view:cache は使わない。filament-panels::page 等の Filament ページコンポーネントは
+# 「現在アクティブなパネル」というランタイムコンテキストに依存して解決されるため、
+# リクエスト外で全 Blade ビューを一括コンパイルする view:cache と構造的に相性が悪く、
+# ComponentTagCompiler が例外を投げてデプロイ全体が失敗する(2026-08-06 に本番で実際に発生)。
+# view:cache を使わなくても各ビューは初回リクエスト時に自動コンパイルされ
+# storage/framework/views にキャッシュされるため、動作上の実害は無い
 
 # Filament は段階1で導入する。それまでコマンドが存在しないため有無を見てから呼ぶ
 if "$PHP_BIN" artisan list --raw | grep -q '^filament:optimize'; then

@@ -1,8 +1,8 @@
 # 予約管理システム 詳細設計書
 
-- 版: 1.3（2026-08-03 更新。上位文書のデプロイ自動化に追随）
-- 対象: `docs/requirements.md` 版 1.9 / `docs/non-functional-requirements.md` 版 1.4 /
-  `docs/design.md` 版 1.5
+- 版: 1.4（2026-08-07 更新。段階0〜5完了・Shopify API 実態・demo:reset を反映）
+- 対象: `docs/requirements.md` 版 2.0 / `docs/non-functional-requirements.md` 版 1.5 /
+  `docs/design.md` 版 1.6
 
 基本設計で「どう作るか」の方針は決まっている。ここでは**そのまま実装できる粒度**だけを書く。
 上位文書と食い違ったときは要件 → 非機能 → 基本設計 → 本書の順で正とし、本書を直す。
@@ -28,15 +28,14 @@
 
 | 項目 | 値 | 備考 |
 |---|---|---|
-| PHP | 8.3 以上（Filament の要求に合わせる） | 段階0でサーバーパネルの設定を確認・変更 |
-| Laravel | 採用時点の最新 LTS 系 | メジャー固定（NFR 8） |
-| Filament | 採用時点の最新安定版 | 同上。要求 PHP を先に確認（設計 13） |
+| PHP | **8.3 以上**（本番 8.3.30 で確認済み） | 段階0でサーバーパネルの設定を確認・変更 |
+| Laravel | **13.23.0**（`^13.8`） | メジャー固定（NFR 8） |
+| Filament | **5.7.5**（`^5.7`） | v5 はパネルごとに名前空間を切る（`Admin/`） |
 | DB エンジン | 本番: MariaDB 10.5 系（Xserver 標準）/ ローカル・CI: MySQL 8.0 | utf8mb4 / utf8mb4_unicode_ci。NULL を unique の重複とみなさない挙動・照合順序は両者で共通のため、本書が前提とする範囲では互換 |
 | Node | 22 系（CI でのビルド用のみ） | 本番には持ち込まない（設計 11.1） |
+| Shopify Admin API | **2026-07**（`SHOPIFY_API_VERSION`） | 実クレデンシャルで在庫 API を確認済み（7.2） |
 
-**バージョンは段階0で確定し、本書の本節を書き換える。** 未確定のまま段階1に進まない。
-Filament の要求 PHP がサーバーパネルの選択肢に無い場合、その時点で管理画面の方式を
-再検討する必要があり、それは段階1以降では取り返せないため。
+**バージョンは段階0で確定済み（2026-08-03〜04）。**
 
 ### 2.2 ドライバ構成
 
@@ -122,7 +121,7 @@ Redis が使えない（NFR 2）。`jobs` / `failed_jobs` / `cache` / `sessions`
 | `seat_index` | unsigned tinyint | ○ | null | line item 内の何席目か（1始まり） |
 | `checked_in_at` | datetime | ○ | null | |
 | `cancelled_at` | datetime | ○ | null | |
-| `cancelled_by` | varchar(20) | ○ | null | `customer` / `staff` / `system` |
+| `cancelled_by` | varchar(20) | ○ | null | `customer` / `staff` / `admin` / `system` |
 | `created_at` / `updated_at` | timestamp | ○ | | |
 
 **インデックス**
@@ -260,6 +259,19 @@ enum ReservationStatus: string {
 }
 
 enum UserRole: string { case Staff = 'staff'; case Admin = 'admin'; }
+
+enum ReservationSource: string {
+    case Shopify = 'shopify';
+    case Manual = 'manual';
+    case Seed = 'seed';
+}
+
+enum CancelledBy: string {
+    case Customer = 'customer';
+    case Staff = 'staff';
+    case Admin = 'admin';    // 期限切れ予約のキャンセル等（staff は期限内のみ）
+    case System = 'system';  // Webhook 取り込み中の内部ロールバック専用
+}
 
 enum WebhookStatus: string {
     case Received = 'received';     // 受信済み・未処理
@@ -446,11 +458,14 @@ final class ImportOrderReservations
 2. 各 line item について
      2-0. `line_item.id` が無い場合は failed（仕様違反）として記録し、
           この line item の処理を打ち切る
-     2-1. variant_id に対応する slot を引く。無ければ skip（理由: 物販/未登録）
-     2-2. slot->isBookable() が false なら skip（理由: 締切/中止/下書き）
-     2-3. quantity 回、seat_index = 1..quantity で CreateReservation を呼ぶ
+     2-1. `variant_id` を GID 形式（`gid://shopify/ProductVariant/...`）へ正規化して
+          `slots.shopify_variant_id` と突き合わせる（Webhook payload は数値 legacy ID
+          で届くが、枠側は GraphQL 解決結果の GID で保存する）
+     2-2. variant_id に対応する slot を引く。無ければ skip（理由: 物販/未登録）
+     2-3. slot->isBookable() が false なら skip（理由: 締切/中止/下書き）
+     2-4. quantity 回、seat_index = 1..quantity で CreateReservation を呼ぶ
           （reserveInventory=false, sendMail=false）
-     2-4. 途中で例外が出たら、この line item で作成済みの予約を
+     2-5. 途中で例外が出たら、この line item で作成済みの予約を
           CancelReservation(system, restoreInventory=false, sendCancelledMail=false)
           で取り消し、この line item を failed に記録
 3. 1件でも予約を作れた かつ failed が無い → 確定メールを1通 dispatch（全予約番号を列挙）
@@ -481,6 +496,7 @@ final class ImportOrderReservations
 | `SlotNotBookableException` | `CreateReservation` | 画面: バリデーションエラー / Webhook: skip |
 | `InventoryUnavailableException` | `CreateReservation` | 画面: エラー表示。予約は作られない |
 | `ReservationNotCancellableException` | `CancelReservation` | 画面: 期限切れの案内 |
+| `CheckInNotRevertibleException` | `CheckInReservation::revert()` | スタッフによるチェックイン取り消しを拒否 |
 | `InvalidStateTransition` | モデル | **握らない。** バグなので 500 で落とす |
 | `ShopifyApiException` | `ShopifyClient` | 同期呼び出しなら上位へ / ジョブならリトライ |
 
@@ -552,6 +568,8 @@ final class ShopifyClient
 - ヘッダ: `X-Shopify-Access-Token`
 - タイムアウト: 接続5秒 / 応答10秒
 - リトライ: HTTP 429 と 5xx のみ、`Retry-After` を尊重して最大3回（同期呼び出し時）
+- **変数無しの GraphQL クエリでは `$variables` に空配列を渡さない。**
+  `(object) []` として送る（空配列は Shopify 側で `Invalid variables parameter` になる）
 - **`userErrors` が空でない応答は例外にする。** GraphQL は HTTP 200 で
   業務エラーを返すため、ステータスコードだけ見ていると失敗を成功と誤認する
 - ログ: リクエストの query 名と変数のうち ID のみ。**トークンは出さない**（NFR 6.2）
@@ -624,7 +642,8 @@ API 側が担保するようになっており、当時の懸念(片方の更新
      - webhook_id の一意制約違反 → 既受信。何もせず 200
      - payload に `line_items[*].id` が無い場合でもこの時点では弾かない
        （受信は成功として記録し、ジョブ側で failed に落とす）
-2. ProcessShopifyOrder を dispatch
+2. `ProcessShopifyOrder` を dispatch（`QUEUE_CONNECTION=sync` のテスト環境では
+   ジョブ例外が伝播するため、コントローラ側で try/catch して 200 を守る）
 3. 200 を返す（ここまでを最短で通す。要件の5秒以内）
 ```
 
@@ -638,8 +657,11 @@ API 側が担保するようになっており、当時の懸念(片方の更新
 | `services.shopify.shop_domain` | `SHOPIFY_SHOP_DOMAIN` | |
 | `services.shopify.access_token` | `SHOPIFY_ACCESS_TOKEN` | ログ・リポジトリに出さない |
 | `services.shopify.webhook_secret` | `SHOPIFY_WEBHOOK_SECRET` | |
-| `services.shopify.api_version` | `SHOPIFY_API_VERSION` | 例 `2026-01`。**ハードコードしない** |
+| `services.shopify.api_version` | `SHOPIFY_API_VERSION` | 本番は `2026-07` |
 | `services.shopify.location_id` | `SHOPIFY_LOCATION_ID` | 単一ロケーション（要件 5.5） |
+| `booking.admin_notification_email` | `BOOKING_ADMIN_NOTIFICATION_EMAIL` | 14章の通知宛先。未設定なら送信しない |
+| `booking.demo_slot_variant_ids` | `BOOKING_DEMO_SLOT_VARIANT_IDS` | カンマ区切りのバリアント GID 一覧（15.1） |
+| `booking.demo_password` | `BOOKING_DEMO_PASSWORD` | デモアカウントの既定パスワード（公開前提） |
 
 起動時に未設定を検知したいので、`config` から読む箇所で `?? throw` はせず、
 **段階0で `/health` に設定値の有無（値そのものは返さない）を含めて確認する**。
@@ -652,7 +674,7 @@ API 側が担保するようになっており、当時の懸念(片方の更新
 |---|---|---|---|---|---|
 | `ProcessShopifyOrder` | `default` | 5 | 60, 300, 900, 1800, 3600 | 60 | `webhook_events.status=failed` + 管理者へ通知 |
 | `AdjustShopifyInventory` | `priority` | 5 | 60, 300, 900, 1800, 3600 | 30 | `audit_logs` に記録 + 通知 |
-| `SendReservationMail` | `default` | 1（自動再送なし） | — | 30 | `mail_logs.status=failed`（+ 通知は段階5） |
+| `SendReservationMail` | `default` | 1（自動再送なし） | — | 30 | `mail_logs.status=failed` + 管理者へ通知 |
 
 `queue:work` は `--queue=priority,default` で起動し、**補償の在庫戻しを先に流す**。
 
@@ -754,6 +776,8 @@ handle(string $type, array $reservationIds, string $to, ?int $existingMailLogId)
 
 - `cache` に保存した `schedule.last_run_at` を読む（NFR 6.4）
 - 最終実行から **600 秒**を超えていたら `status: "stale"` で **503**
+- **`schedule.last_run_at` 未設定時（デプロイ直後・cron 未稼働）は `status: "ok"`**
+  として扱う（stale と区別できないため。段階1〜4の暫定実装を段階5で維持）
 - DB 接続に失敗したら 503
 - **個人情報・バージョン・設定値そのものは返さない**（NFR 6.4）
 
@@ -860,6 +884,16 @@ Policy を必ず作り、**ナビゲーションの非表示と両方で塞ぐ**
 `InventoryUnavailableException` は
 「Shopify の在庫を確保できませんでした。予約は登録されていません」として画面に返す。
 
+**一覧の一括削除（`DeleteBulkAction`）は置かない。** 予約は論理削除ではなく
+`status` で表現し行は消さない（3.1）。キャンセルはレコードアクション
+`CancelReservation`（staff は期限内のみ、admin は期限不問）で行う。
+
+### 11.3a `WorkshopResource`
+
+- 削除は**配下の開催枠が0件のときのみ**許可する（`WorkshopPolicy::delete`）。
+  Slot 側の「予約0件の枠のみ削除可」と対称にした設計判断による拡張で、
+  詳細設計の必須要求ではない（FK が RESTRICT のため実害は無い）
+
 ### 11.3 `SlotResource`
 
 - 一覧: 開催日時 / 講座 / 定員 / 確定数 / 状態 / バリアントID
@@ -867,12 +901,16 @@ Policy を必ず作り、**ナビゲーションの非表示と両方で塞ぐ**
 - 保存時、`shopify_variant_id` が変わったら `resolveInventoryItemId` を呼び直す
 - 「受付中にする」アクションは、inventory item が解決済みのときだけ有効（4.2）
 - 削除は**予約が1件も無い枠のみ**許可する（FK が RESTRICT なので DB でも防がれる）
+- 一括削除は `DeleteBulkAction::authorizeIndividualRecords('delete')` で
+  Policy の `delete()` をレコード単位に評価する
 
 ### 11.4 `DailyRoster`（A-5 当日リスト）
 
 - 日付を選ぶと、その日の開催枠を開始時刻順に並べる
 - 枠ごとに 氏名 / 電話 / 予約番号 / チェックイン欄
 - チェックインはインライン操作（`CheckInReservation` を呼ぶ）
+- チェックインの取り消しは**管理者のみ**（`CheckInReservation::revert()`。
+  スタッフは `CheckInNotRevertibleException`）
 - 印刷用 CSS（`@media print`）でナビゲーションとボタンを消し、枠ごとに改ページ
 - 既定の対象日は「今日」。**未来日も選べる**（前日に印刷する運用があるため）
 
@@ -911,6 +949,8 @@ Policy を必ず作り、**ナビゲーションの非表示と両方で塞ぐ**
 
 - テキストパートを必ず持つ（HTML のみにしない）
 - 送信元は `.env` の `MAIL_FROM_ADDRESS`。**デモ環境である旨をフッタに入れる**
+- 会場案内・持ち物は実在の屋号・住所を書けない制約上、
+  「ショップページを確認」等の**汎用文言で確定**（2026-08-05）
 - 確定メールは注文単位で1通。予約番号を箇条書きで並べる（要件 4.1）
 - リマインドは**予約単位**で送る。同一メールアドレスに複数枠があっても分ける
   （枠ごとに開催時刻が違い、まとめると誤読される）
@@ -983,16 +1023,22 @@ $schedule->command('reservations:remind')->dailyAt('07:00');
 
 ```
 0. ガード: APP_ENV === 'production' なら即終了（要件・NFR 7.3）
-1. 対象テーブルを truncate
+1. MySQL の TRUNCATE は FK 制約の存在自体で失敗するため、
+   `SET FOREIGN_KEY_CHECKS=0/1` で一時無効化してから truncate
      reservations → slots → workshops → users（is_demo=false も含め全件）
      ※ audit_logs / mail_logs / webhook_events / cache / jobs は残す
 2. failed_jobs は削除する（前日の失敗が翌日のダッシュボードに残らないように）
 3. シードを投入
-     - 講座 3件
-     - 開催枠: 今日から14日先まで、1日1〜2枠。状態は open を基本に
-       closed / completed / cancelled を1つずつ混ぜる（状態遷移を見せるため）
-     - 予約: 各枠に 0〜定員-1 件。埋まり具合に差をつける
-     - ユーザー: admin 1 / staff 1（いずれも is_demo=true）
+     - 講座 3件（汎用のワークショップ名。茶葉物販とは無関係）
+     - 開催枠: 今日から14日先まで、1日1〜2枠。
+       `BOOKING_DEMO_SLOT_VARIANT_IDS` のプールから**インデックス方式で割り当て**
+       （`slots.shopify_variant_id` は unique のため使い回せない）。
+       バリアントIDが足りない枠・未設定時は draft のまま（予約シードもスキップ）
+     - 予約: open 枠に 0〜定員-1 件（`CreateReservation`、在庫・メールは触らない）
+     - 状態混在: 予約シード**後**に closed / cancelled / completed を1枠ずつ上書き
+       （completed は過去終了時刻のデモ表示専用で、ここでのみ status を直接設定）
+     - ユーザー: admin 1 / staff 1（`demo-admin@example.com` /
+       `demo-staff@example.com`。いずれも is_demo=true）
 4. 各枠の Shopify 在庫を set(capacity - 確定予約数) で上書き
 5. audit_logs に inventory.reset を1件記録（枠ごとの前後値つき）
 ```
@@ -1039,6 +1085,15 @@ $schedule->command('reservations:remind')->dailyAt('07:00');
 | 14 | `health_returns_503_when_schedule_is_stale` | 死活監視が機能すること |
 | 15 | `webhook_fails_when_line_item_id_missing` | `line_item.id` 欠損を仕様違反として failed に落とす（5.3） |
 
+実装で追加したテスト（16.1 の表外だが CI で実行）。
+
+| テストクラス | 検証内容 |
+|---|---|
+| `AdminPanelSmokeTest` | 管理画面の一覧・作成画面表示、ゲストのログインリダイレクト |
+| `ResourceAuthorizationTest` | staff/admin の Policy による作成・編集可否 |
+| `CheckInReservationTest` | チェックイン取り消しは管理者のみ |
+| `ShopifyWebhookTest`（追加） | `variant_id` 数値→GID 正規化、`webhook_line_item_variant_id_matches_gid_stored_slot` |
+
 Shopify API は `Http::fake()`。実 API を叩くテストは書かない（NFR 9.1）。
 
 ### 16.2 テストの前提
@@ -1055,14 +1110,18 @@ Shopify API は `Http::fake()`。実 API を叩くテストは書かない（NFR
 
 設計 12 の段階に、本書の節を割り当てたもの。**各段階の終わりに動くものが残る。**
 
-| 段階 | 実装 | 完了条件 |
-|---|---|---|
-| 0 | 2章の確定 / デプロイ疎通（手動→自動）/ `/health` の骨組み | 本番 URL で空の Laravel と `/health` が応答し、main への push で更新される |
-| 1 | 3章（DB）/ 4章（Enum・モデル）/ 5.1・5.2 / 11.2・11.3 | 手で枠と予約を作れる。在庫処理は未接続 |
-| 2 | 7章 / 8.2 / 5.3 / 11.5 | 購入で予約が自動登録される。テスト 1〜4, 9 |
-| 3 | 12章（メール）/ 11.2 の CSV / 11.4 | 業務が一周する。テスト 7 |
-| 4 | 5.2 の在庫戻し / 8.3 / 9〜10章（顧客画面） | 双方向連携。テスト 5, 6, 8, 10, 11 |
-| 5 | 15章 / 11.1 の保護 / 11.6 / 13〜14章 | デモ公開。テスト 12, 13, 14 |
+| 段階 | 実装 | 完了条件 | 状態 |
+|---|---|---|---|
+| 0 | 2章の確定 / デプロイ疎通（手動→自動）/ `/health` | 本番 URL で Laravel と `/health` が応答し、デプロイが通る | **完了** 2026-08-03〜06 |
+| 1 | 3章 / 4章 / 5.1・5.2 / 11.2・11.3 / Policy（3リソース） | 手で枠と予約を作れる | **完了** 2026-08-04 |
+| 2 | 7章 / 8.2 / 5.3 / 11.5 | 購入で予約が自動登録。テスト 1〜4, 9, 15 | **完了** 2026-08-04 |
+| 3 | 12章 / 11.2 CSV / 11.4 / 5.4 | 業務が一周。テスト 7 + チェックイン | **完了** 2026-08-05 |
+| 4 | 5.2 在庫戻し / 8.3 / 9〜10章 | 双方向連携。テスト 5, 6, 8, 10, 11 | **完了** 2026-08-05 |
+| 5 | 15章 / 11.1 保護 / 11.6 / 13〜14章 | デモ公開。テスト 12, 13, 14 | **完了** 2026-08-05 |
+
+**2026-08-05 時点で上表はすべて完了。** 自動テスト 45 件（Feature 44 + Unit 1）が通過。
+本番への反映・cron 登録・Webhook 購読の実登録は 2026-08-06 に完了。
+**残るは運用上の e2e 確認**（要件 9・要件 11 の残件参照）。
 
 **段階1で `CreateReservation` を先に作る**（設計 12）。段階2で書き直さないため。
 **段階4より前に顧客画面を作らない**。キャンセルが動かない照会画面は、
@@ -1087,6 +1146,16 @@ Shopify API は `Http::fake()`。実 API を叩くテストは書かない（NFR
 | 要件 6.2 | `Open → Completed` の直行を不可と明示 | 締切を経ない場合の Webhook の扱いが未定義になる（4.2） |
 | NFR 6.3 | 在庫差分ウィジェットは `cache` を読む（画面から API を叩かない） | 同時閲覧でレート制限に触れる（11.6） |
 | 設計 7.1 | `SendReservationMail` の自動再送（`tries=3`）を廃止し、失敗即 `mail_logs.status=failed` + 手動再送のみに変更 | メール失敗は在庫等と違い業務データを壊さないため、待たせるより即座に画面へ出すほうが分かりやすい（8.1・8.4） |
+| 4.1 / 5.2 | `CancelledBy::Admin` を追加。staff は期限内のみキャンセル可 | 要件 4.3・11.1 権限表（期限切れは admin のみ） |
+| 5.3 | Webhook `variant_id` の数値 legacy ID を GID へ正規化して枠検索 | 実運用 payload と `slots.shopify_variant_id` の形式差（2026-08-04） |
+| 7.1 | GraphQL 変数無し時は `(object) []` を送る | 空配列は `Invalid variables parameter` で拒否される（2026-08-05） |
+| 7.2 | `adjust`/`set` は `changeFromQuantity` + `@idempotent` 必須の2往復構成 | 実スキーマ 2026-07 の制約（2026-08-05） |
+| 設計 11.2 | `release.sh` で `view:cache` を使わない | Filament ページコンポーネントと相性不良（2026-08-06） |
+| 設計 11.2 | `release.sh` 先頭で `package:discover` を実行 | `bootstrap/cache/packages.php` が初回デプロイ時点で固まる不具合（2026-08-06） |
+| 15.1 | バリアントIDはプールからインデックス割り当て（使い回し不可） | `slots.shopify_variant_id` の unique 制約（2026-08-05） |
+| 11.3a | `WorkshopPolicy::delete` は配下枠0件のみ | Slot 削除条件との対称（設計判断。必須要求ではない） |
+| 11.4 | `DailyRoster` は Filament `viteTheme` 未配線のためカスタム CSS | Livewire の `getSlots()` 衝突回避でメソッド名も注意（2026-08-05） |
+| 10.1 | C-2 キャンセル確認は `<details>` ディスクロージャ | JS `confirm()` は自動操作・a11y で避ける（2026-08-05） |
 
 ---
 
@@ -1094,11 +1163,14 @@ Shopify API は `Http::fake()`。実 API を叩くテストは書かない（NFR
 
 上位文書から引き継ぐもの（NFR 12・設計 13）に加えて、本書で残ったもの。
 
-- ~~Shopify Admin API のバージョン（7.4）~~ → 2026-08-05、実クレデンシャルで
-  `2026-07` を採用して解決(`.env` の `SHOPIFY_API_VERSION`)
-- ~~`inventoryAdjustQuantities` の `reason` に使える値~~ → 2026-08-05、実APIで確認。
-  `reason` は enum ではなく自由記述の `String!` のため `"correction"` で問題ない。
-  ただし別の想定外(`changeFromQuantity` 必須・`@idempotent` ディレクティブ必須)が
-  見つかり7.2を修正した(詳細は7.2参照)
+- ~~Shopify Admin API のバージョン（7.4）~~ → 2026-08-05、`2026-07` で確定
+- ~~`inventoryAdjustQuantities` の `reason` に使える値~~ → 2026-08-05、`correction` で問題ないことを確認。
+  `changeFromQuantity` 必須・`@idempotent` 必須も判明し 7.2 を修正済み
+- ~~会場案内・持ち物などメール本文の固定文言（12章）~~ → 2026-08-05、
+  実在の屋号・住所を書けない制約上の汎用文言で確定
 - Xserver の SMTP 送信数上限。上限次第でリマインドの送信間隔を分散させる（NFR 12）
-- 会場案内・持ち物などメール本文の固定文言（12章。段階3で暫定の汎用文言に確定済み）
+- 要件 9 の完成シナリオの本番 e2e（Shopify 購入 → Webhook → 予約自動登録）
+- 本番 `.env` の運用設定（`BOOKING_DEMO_SLOT_VARIANT_IDS` /
+  `BOOKING_ADMIN_NOTIFICATION_EMAIL` / `DEPLOY_HEALTH_URL`）
+- 外形監視サービスの選定（NFR 6.4）
+- PHPStan の導入（NFR 8。未導入・優先度低）

@@ -1,7 +1,7 @@
 # 予約管理システム 基本設計書
 
-- 版: 1.5（2026-08-03 更新。11章のデプロイを GitHub Actions による自動デプロイに変更）
-- 対象: `docs/requirements.md` 版 1.9
+- 版: 1.6（2026-08-07 更新。段階0〜5完了・ディレクトリ構成・デプロイ実態を反映）
+- 対象: `docs/requirements.md` 版 2.0
 - 非機能要件の詳細は `docs/non-functional-requirements.md` を参照
 - カラム定義・シグネチャなどの実装粒度は `docs/detailed-design.md` を参照
 
@@ -56,22 +56,34 @@ PHP を先に上げる**。段階0でここを確認する（要件8）。
 ```
 app/
 ├─ Models/            Workshop, Slot, Reservation, User, WebhookEvent, AuditLog, MailLog
-├─ Enums/             SlotStatus, ReservationStatus, UserRole, WebhookStatus
-├─ Actions/           CreateReservation, CancelReservation, ImportOrderReservations
+├─ Enums/             SlotStatus, ReservationStatus, UserRole, WebhookStatus,
+│                     ReservationSource, CancelledBy
+├─ Actions/           CreateReservation, CancelReservation, ImportOrderReservations,
+│                     CheckInReservation
+├─ Contracts/         InventoryServiceContract
 ├─ Services/Shopify/  ShopifyClient, InventoryService
 ├─ Jobs/              ProcessShopifyOrder, AdjustShopifyInventory, SendReservationMail
+├─ Mail/              Reservation{Confirmed,Reminder,Cancelled}Mail, AdminAlertMail
+├─ Support/           AdminNotifier, ReservationCodeGenerator
 ├─ Http/
 │   ├─ Middleware/    VerifyShopifyWebhook
 │   └─ Controllers/
 │       ├─ Webhooks/  ShopifyOrderController
-│       └─ Customer/  LookupController, ReservationController
-├─ Filament/
-│   ├─ Resources/     WorkshopResource, SlotResource, ReservationResource, UserResource
+│       ├─ ReservationLookupController, ReservationController（顧客照会 C-1/C-2）
+│       └─ HealthCheckController
+├─ Policies/          WorkshopPolicy, SlotPolicy, ReservationPolicy, UserPolicy
+├─ Filament/Admin/
+│   ├─ Resources/     Workshop, Slot, Reservation, User（各 Resource は
+│   │                 Schemas/・Tables/・Pages/ に分割。Filament v5 の構成）
 │   ├─ Pages/         DailyRoster, WebhookEvents, MailLogs
 │   └─ Widgets/       TodayReservations, UpcomingSlots, WebhookFailures, InventoryDrift
 └─ Console/Commands/  slots:close, slots:complete, reservations:mark-no-show,
-                      reservations:remind, demo:reset, logs:prune
+                      reservations:remind, inventory:check, demo:reset, logs:prune,
+                      schedule:heartbeat
 ```
+
+`InventoryServiceContract` は段階2で `App\Services\Shopify\InventoryService` に差し替え済み
+（`AppServiceProvider` でバインド。テストは `Http::fake()` で差し替える）。
 
 ### Actions の責務
 
@@ -80,6 +92,7 @@ app/
 | `CreateReservation` | 開催枠・氏名・メール・電話を受け取り、予約番号を発行して1件作る。在庫を押さえるかどうかは引数で切り替える |
 | `CancelReservation` | 予約を「キャンセル済み」にし、在庫戻しジョブを積む |
 | `ImportOrderReservations` | 注文1件から予約を必要数まとめて作る。`CreateReservation` を呼ぶ |
+| `CheckInReservation` | 当日リストからのチェックイン・取り消し（管理者のみ） |
 
 在庫を押さえるかを引数にしているのは、**Shopify 経由の予約では在庫を触ってはいけない**
 ため。購入時点で Shopify が既に1減らしている。手動登録のときだけ押さえる。
@@ -282,7 +295,9 @@ PHP の enum で定義し、**遷移はモデルのメソッド経由に限定�
 | A-2 ダッシュボード | Widget 4枚（本日の予約数 / 直近の開催枠と埋まり具合 / Webhook 失敗件数 / 在庫差分） |
 | A-3 予約一覧 | `ReservationResource` のテーブル。フィルタと CSV 出力 |
 | A-4 予約詳細・手動登録 | 同 Resource のフォーム。保存時に `CreateReservation` を呼ぶ |
-| A-5 当日リスト | カスタム Page。印刷用スタイルとチェックイン |
+| A-5 当日リスト | カスタム Page。印刷用スタイルとチェックイン（Filament `viteTheme`
+未配線のため Tailwind ではなくページ内 `<style>` で装飾。Livewire では
+`getSlots()` 等のメソッド名に `slot` を含めない） |
 | A-6 / A-7 開催枠 | `SlotResource` |
 | A-8 講座 | `WorkshopResource` |
 | A-9 ユーザー管理 | `UserResource`（管理者のみ・デモユーザーは保護） |
@@ -453,14 +468,14 @@ GitHub Actions で実行する（第1弾と体裁を揃える）。CI はロー�
 
 要件 10 の段階に、この設計での作業を割り当てたもの。
 
-| 段階 | この設計での作業 |
-|---|---|
-| 0 | PHP バージョン確認、`storage:link`、デプロイ手順の疎通 |
-| 1 | Models / Enums / `CreateReservation` / Filament の Resource 一式 |
-| 2 | `VerifyShopifyWebhook` / `ProcessShopifyOrder` / `webhook_events` |
-| 3 | メールと `mail_logs` / CSV / 当日リスト |
-| 4 | `CancelReservation` / `AdjustShopifyInventory` / 顧客照会画面 |
-| 5 | `demo:reset` / デモユーザー保護 / 在庫差分ウィジェット |
+| 段階 | この設計での作業 | 状態 |
+|---|---|---|
+| 0 | PHP バージョン確認、`storage:link`、デプロイ手順の疎通 | **完了**（2026-08-03〜06） |
+| 1 | Models / Enums / `CreateReservation` / Filament の Resource 一式 | **完了**（2026-08-04） |
+| 2 | `VerifyShopifyWebhook` / `ProcessShopifyOrder` / `webhook_events` | **完了**（2026-08-04） |
+| 3 | メールと `mail_logs` / CSV / 当日リスト | **完了**（2026-08-05） |
+| 4 | `CancelReservation` / `AdjustShopifyInventory` / 顧客照会画面 | **完了**（2026-08-05） |
+| 5 | `demo:reset` / デモユーザー保護 / 在庫差分ウィジェット / バッチ・通知 | **完了**（2026-08-05） |
 
 段階1の時点で `CreateReservation` を作っておく。段階2で Webhook から呼ぶときに
 書き直さずに済む。**ここを後回しにすると、この設計の前提が崩れる。**
@@ -469,7 +484,8 @@ GitHub Actions で実行する（第1弾と体裁を揃える）。CI はロー�
 
 ## 13. 未決事項
 
-- Filament の具体的なバージョンと、それが要求する PHP バージョン
-  （採用時に確認し、サーバーパネルの設定を合わせる）
+- ~~Filament の具体的なバージョンと、それが要求する PHP バージョン~~
+  → **Filament 5.7.5 / PHP 8.3 で確定**（2026-08-04）
 - SMTP の送信元アドレスと、Xserver 側の送信数上限
-- シードで作る講座・開催枠の件数と期間の取り方
+- ~~シードで作る講座・開催枠の件数と期間の取り方~~
+  → **`demo:reset` で今日から14日先・1日1〜2枠・講座3件で確定**（15.1）

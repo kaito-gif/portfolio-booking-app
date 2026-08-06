@@ -1,6 +1,6 @@
 # 予約管理システム 要件定義書
 
-- 版: 1.9（2026-08-03 更新。デプロイを GitHub Actions による自動デプロイに変更）
+- 版: 2.0（2026-08-07 更新。段階0〜5の実装完了・本番反映を反映）
 - 位置づけ: ポートフォリオ第2弾。方針と背景は
   `~/.claude/plans/laravel-booking-portfolio.md`(リポジトリ外管理)を参照
 - 下位文書: `docs/non-functional-requirements.md` / `docs/design.md` /
@@ -326,7 +326,9 @@ VPS ではないため次の制約がある。
 - **常駐プロセスを立てられない。** supervisor が使えないため、キューは cron から
   `queue:work --stop-when-empty` を毎分呼ぶ方式にする。最大1分の遅延が生じるが、
   予約処理では実害がない
-- ドキュメントルートをサブドメインの設定で `public` に向ける必要がある
+- ドキュメントルートを `public` に向ける必要がある。Xserver 新パネルでは任意パス指定が
+  できないため、**シンボリックリンク方式**を採用する（アプリ本体をドメイン配下の
+  専用ディレクトリに置き、`public_html` 配下のサブドメイン先を `public` へ symlink）
 - **PHP のバージョンをサーバーパネルで確認・変更しておく。** Laravel と Filament は
   いずれも比較的新しい PHP を要求するため、既定のままだと段階0で止まる。
   `storage:link` が張れることも段階0のうちに確かめる
@@ -371,6 +373,9 @@ Webhook はパスワードと無関係に届くため連携に支障はないが
 | 4 | キャンセルと在庫の戻し | 双方向連携。Webhook を受けるだけの実装との差が出る |
 | 5 | デモ公開の仕上げ | シード・日次リセット（Shopify 在庫の書き戻しを含む）・保護つきデモアカウント |
 
+**2026-08-05 時点で段階0〜5の実装は完了。** 詳細設計17章のチェックリストもすべて完了。
+自動テスト 45 件（Feature 44 + Unit 1）が通過している。
+
 **段階0を最後に回さない。** まとめてデプロイすると必ず詰まる。
 **自動デプロイも段階0の範囲に含める。**ただし**手動で1回通したあとに自動化する**。
 先に自動化すると、失敗したときに CI 側の問題かサーバー設定の問題かを切り分けられない。
@@ -378,16 +383,45 @@ Webhook はパスワードと無関係に届くため連携に支障はないが
 規模が重いと感じた場合に削る順番は、講座マスタ（開催枠に統合する）、
 次にリマインドメール。**ダッシュボードは実装が軽いわりに第一印象に効くので残す。**
 
-管理画面の実装方式は **Filament** を採用する。短期間で業務画面を成立させることを優先し、
-必要な差分（予約フロー、Shopify 連携、当日リスト、CSV 出力）で独自実装の見せ場を作る。
+管理画面の実装方式は **Filament v5 系**（採用時点 `filament/filament ^5.7`）を採用する。
+短期間で業務画面を成立させることを優先し、必要な差分（予約フロー、Shopify 連携、
+当日リスト、CSV 出力）で独自実装の見せ場を作る。
 
 ---
 
 ## 11. 決定事項と残件
 
-- リポジトリ名: `portfolio-booking-app`
-- サブドメイン名: `reserve.`
+### 決定事項
+
+- リポジトリ名: `portfolio-booking-app`（GitHub private。public 化は履歴整理後）
+- サブドメイン名: `reserve.`（実ドメインはリポジトリ外の計画書・`docs/context.md` に記載）
 - システム表示名: `chanoka ワークショップ予約管理`
+- スタック確定値: PHP 8.3 / Laravel 13.23 / Filament 5.7 / Shopify Admin API `2026-07`
+- デモアカウント（`demo:reset` が毎日投入）:
+  - 管理者 `demo-admin@example.com` / スタッフ `demo-staff@example.com`
+  - 既定パスワード `demo-pass-1234`（`BOOKING_DEMO_PASSWORD` で変更可。公開ページ記載用）
 - 第1弾の公開ページ（Notion）での並べ方:
   第1弾ページ内に第2弾セクションを追加し、配置は「デモリンク直下（対応できる作業の前）」。
   導線は「本番URL」と「GitHub」の2リンクを並列で提示する。
+
+### 実装済み（2026-08-06 時点）
+
+- 段階0〜5の全機能・バッチ・通知・ダッシュボードウィジェット
+- GitHub Actions による CI（`ci.yml`）とデプロイ（`deploy.yml`）
+- 本番への手動デプロイおよび `workflow_dispatch` による自動デプロイの成功
+- Xserver cron 登録（`schedule:run` 毎分）
+- Shopify Webhook 購読（`ORDERS_CREATE`）の実登録
+- Shopify 実クレデンシャルでの在庫 API 疎通確認
+
+### 残件（運用・公開前）
+
+- **e2e確認**: 受付中の枠作成 → chanoka-demo で購入 → Webhook 経由の予約自動登録
+  （Webhook 購読は登録済み。`demo:reset` 初回実行後のデモアカウントで管理画面から枠を用意する）
+- 本番 `.env` の `BOOKING_DEMO_SLOT_VARIANT_IDS`（開催枠数に応じたバリアント GID の一覧）
+- 本番 `.env` の `BOOKING_ADMIN_NOTIFICATION_EMAIL`（14章の管理者通知宛先）
+- GitHub `production` environment への `DEPLOY_HEALTH_URL` 登録
+- リポジトリ public 化時: `deploy.yml` の `push: branches: [main]` 復元と
+  Required reviewers の設定（private では GitHub Pro 以上が必要なため、現状は
+  `workflow_dispatch` 手動実行のみ）
+- 要件 7.4: デモアカウントを公開ページに記載する
+- 要件 9 完成シナリオの本番 URL での最終確認（上記 e2e を含む）

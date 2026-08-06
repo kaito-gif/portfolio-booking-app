@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\Reservation;
 use App\Models\Slot;
 use App\Models\User;
 use App\Models\Workshop;
@@ -89,14 +88,15 @@ class DemoResetTest extends TestCase
         $this->assertSame($slotsBefore, Slot::count());
     }
 
-    public function test_demo_reset_refuses_to_run_in_production(): void
+    public function test_demo_reset_runs_in_production(): void
     {
+        $this->fakeShopify();
         app()['env'] = 'production';
 
         Artisan::call('demo:reset');
 
-        $this->assertSame(0, Workshop::count());
-        $this->assertSame(0, Reservation::count());
+        $this->assertGreaterThan(0, Workshop::count());
+        $this->assertSame(2, User::where('is_demo', true)->count());
 
         app()['env'] = 'testing';
     }

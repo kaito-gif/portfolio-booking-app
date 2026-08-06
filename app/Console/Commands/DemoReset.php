@@ -19,25 +19,21 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
 /**
- * 詳細設計15.1。何度流しても同じ結果になる（冪等）。APP_ENV=production では動かない。
+ * 詳細設計15.1。何度流しても同じ結果になる（冪等）。
+ * このシステムは本番URL自体がデモ環境であり、APP_ENV=production の cron から
+ * 毎日3:00に実行される想定（要件7.4・非機能要件7.4）。
  */
 class DemoReset extends Command
 {
     protected $signature = 'demo:reset {--dry-run : 実際には変更せず対象件数だけ表示する}';
 
-    protected $description = 'デモデータを初期状態に戻す（本番では実行不可）';
+    protected $description = 'デモデータを初期状態に戻す';
 
     /** @var string[] 見本の氏名。実在の個人情報と誤認されない架空の組み合わせ（要件7.2・15.2） */
     private const SAMPLE_NAMES = ['見本 太郎', '試用 花子', '見本 次郎', '試用 三郎'];
 
     public function handle(InventoryServiceContract $inventoryService): int
     {
-        if (app()->environment('production')) {
-            $this->error('demo:reset は APP_ENV=production では実行できません');
-
-            return self::FAILURE;
-        }
-
         if ($this->option('dry-run')) {
             $this->info('demo:reset dry_run=1（truncate: reservations, slots, workshops, users / failed_jobs削除 / シード再投入 / Shopify在庫上書き）');
 

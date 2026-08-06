@@ -1022,7 +1022,6 @@ $schedule->command('reservations:remind')->dailyAt('07:00');
 ### 15.1 `demo:reset` の手順
 
 ```
-0. ガード: APP_ENV === 'production' なら即終了（要件・NFR 7.3）
 1. MySQL の TRUNCATE は FK 制約の存在自体で失敗するため、
    `SET FOREIGN_KEY_CHECKS=0/1` で一時無効化してから truncate
      reservations → slots → workshops → users（is_demo=false も含め全件）

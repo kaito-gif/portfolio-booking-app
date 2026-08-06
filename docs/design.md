@@ -405,8 +405,8 @@ GitHub Actions で実行する（第1弾と体裁を揃える）。CI はロー�
 3. **承認** — `production` 環境の承認待ちで止まる。ここを通すまで本番は変わらない
 4. **転送** — `rsync --delete`。`.env` / `storage` / `public/storage` / `tests` /
    `docs` / `docker` は送らない
-5. **リリース処理** — サーバー上で `release.sh` を実行し、`migrate --force` →
-   `config:cache` / `route:cache` / `event:cache` →
+5. **リリース処理** — サーバー上で `release.sh` を実行し、`package:discover` →
+   `migrate --force` → `config:cache` / `route:cache` / `event:cache` →
    （存在すれば）`filament:optimize`
 
 最後に `/health` の応答を確認して終わる。**通らなければデプロイジョブを失敗させる。**
@@ -422,6 +422,7 @@ GitHub Actions で実行する（第1弾と体裁を揃える）。CI はロー�
 | `rsync --delete` の前に `artisan` の存在を確認 | 転送先を間違えたときに消してしまうのを防ぐ |
 | `pull_request` を契機にしない | 公開リポジトリのため、fork からの PR に Secrets を渡さない（NFR 7.2） |
 | `view:cache` を使わない | Filament のページコンポーネント（`filament-panels::page` 等）は現在アクティブなパネルというランタイムコンテキストに依存して解決されるため、リクエスト外で全 Blade ビューを一括コンパイルする `view:cache` と相性が悪く例外で落ちる。ビューは初回リクエスト時に自動コンパイルされるため実害はない（2026-08-06、本番デプロイの失敗で判明） |
+| `release.sh` の先頭で `package:discover` を実行する | `composer install` は CI ランナー上でのみ実行し、`rsync` も `bootstrap/cache/*` を除外するため、本番の `bootstrap/cache/packages.php` は存在する限り検証されず使われ続ける（`PackageManifest::getManifest()`）。初回デプロイ時点のパッケージ一覧のまま固まり、後から追加したパッケージ（Filament・Livewire 等）のサービスプロバイダが読み込まれない不具合になっていた（2026-08-06、`/admin` と `/livewire/*` が404になる不具合で発覚） |
 
 **PHP CLI はフルパスで指定する。** 共用サーバーの既定 `php` が 8.3 系とは限らないため、
 `DEPLOY_PHP_BIN` で明示し、`release.sh` はそれを使う。

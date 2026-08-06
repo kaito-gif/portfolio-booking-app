@@ -18,6 +18,16 @@ if [ ! -f artisan ]; then
     exit 1
 fi
 
+echo '==> パッケージ検出キャッシュを再構築'
+# composer install はCIランナー上でのみ実行し(要件8)、本番サーバーでは実行しない。
+# また rsync は --exclude '/bootstrap/cache/*' のため、CI が作った packages.php は
+# 本番へ転送されない。bootstrap/cache/packages.php は存在する限り中身を検証せず
+# 使われ続ける(PackageManifest::getManifest())ため、明示的に再構築しないと、
+# 初回デプロイ時点のパッケージ一覧のまま固まり、後から追加したパッケージ
+# (Filament・Livewire等)のサービスプロバイダが永久に読み込まれない
+# (2026-08-06、/admin と /livewire/* が404になる不具合で発覚)。
+"$PHP_BIN" artisan package:discover --ansi
+
 echo '==> マイグレーション'
 "$PHP_BIN" artisan migrate --force
 

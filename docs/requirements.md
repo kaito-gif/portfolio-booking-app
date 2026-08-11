@@ -415,13 +415,16 @@ Webhook はパスワードと無関係に届くため連携に支障はないが
 
 ### 残件（運用・公開前）
 
-- **e2e確認**: 受付中の枠作成 → chanoka-demo で購入 → Webhook 経由の予約自動登録
-  （Webhook 購読は登録済み。`demo:reset` 初回実行後のデモアカウントで管理画面から枠を用意する）
-- 本番 `.env` の `BOOKING_DEMO_SLOT_VARIANT_IDS`（開催枠数に応じたバリアント GID の一覧）
-- 本番 `.env` の `BOOKING_ADMIN_NOTIFICATION_EMAIL`（14章の管理者通知宛先）
-- GitHub `production` environment への `DEPLOY_HEALTH_URL` 登録
+- ~~**e2e確認**: 受付中の枠作成 → chanoka-demo で購入 → Webhook 経由の予約自動登録~~
+  **2026-08-09 完了。** 詳細は `docs/context.md` 参照
+- ~~本番 `.env` の `BOOKING_DEMO_SLOT_VARIANT_IDS`（開催枠数に応じたバリアント GID の一覧）~~
+  **2026-08-09、開催枠一覧22件全件にバリアントIDが入りdraftが無いことから設定済みと確認**
+- ~~本番 `.env` の `BOOKING_ADMIN_NOTIFICATION_EMAIL`（14章の管理者通知宛先）~~
+  **2026-08-10 完了**
+- ~~GitHub `production` environment への `DEPLOY_HEALTH_URL` 登録~~ **2026-08-09 完了**
 - リポジトリ public 化時: `deploy.yml` の `push: branches: [main]` 復元と
   Required reviewers の設定（private では GitHub Pro 以上が必要なため、現状は
   `workflow_dispatch` 手動実行のみ）
-- 要件 7.4: デモアカウントを公開ページに記載する
+- ~~要件 7.4: デモアカウントを公開ページに記載する~~ **2026-08-09確認、Notionの
+  公開ページ「Shopify テーマ構築・カスタマイズ」に既に記載済みだった（追記不要）**
 - 要件 9 完成シナリオの本番 URL での最終確認（上記 e2e を含む）

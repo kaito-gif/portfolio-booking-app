@@ -1,58 +1,63 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# chanoka ワークショップ予約管理
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+副業ポートフォリオ用に構築した、ワークショップ予約管理システムです。
+架空の日本茶ブランド「chanoka」が Shopify ストアで販売するワークショップ参加権を起点に、
+Shopify が持たない予約業務（受付・電話予約・キャンセル・当日名簿）を担います。
 
-## About Laravel
+このリポジトリはポートフォリオとして公開しているものであり、クライアント案件の成果物ではありません。
+掲載しているブランド・商品・人物名はすべて架空のものです。
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## デモ
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+デモ環境の URL・デモアカウント・システム構成・実装のポイントは、以下の公開ページに掲載しています。
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+**→ [chanoka ワークショップ予約管理 - 実装ポートフォリオ](https://impartial-astronaut-89c.notion.site/Shopify-3b032860c0bd81369c52f1fc7e587f78)**
 
-## Learning Laravel
+デモ環境はデータと Shopify 在庫を毎日深夜に初期状態へ自動リセットするため、操作しても翌日には元に戻ります。
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## システム構成
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+講座（ワークショップの種類）・開催枠（日時ごとの回）・予約（1件＝1席）の3層構造です。
+予約経路は2つあります。
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+- **Shopify 経由**：参加権購入 → Webhook 受信 → 署名検証・重複排除 → 予約を自動登録 → 確定メール送信
+- **電話・対面**：管理画面から手動登録。登録と同時に Shopify 側の在庫を1減らす
 
-## Agentic Development
+キャンセル時は Shopify の在庫を1戻します。定員超過の判定は持たず、Shopify の在庫を
+売り切れ制御の唯一の正としているため、二重管理が発生しません。
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## 技術スタック
+
+- PHP 8.3 / Laravel 13 / Filament v5（管理画面）
+- 本番: MariaDB 10.5（Xserver 共用レンタルサーバー）/ ローカル・CI: MySQL 8.0
+- キュー・キャッシュ・セッション: すべて `database` ドライバ（Redis 不可の制約下）
+- Shopify Admin GraphQL API（Webhook 受信・在庫調整）
+- GitHub Actions（CI: テスト・Pint / CD: 承認を経た自動デプロイ）
+
+## ディレクトリ構成
+
+- `app/Actions` — 業務ロジックを集約。予約の作成・キャンセルはどの経路からもここだけを呼ぶ
+- `app/Filament/Admin` — 管理画面（Resources / Pages / Widgets）
+- `app/Services/Shopify` — Shopify GraphQL 連携（Webhook 受信・在庫調整）
+- `app/Jobs` — Webhook からの注文取り込み・在庫調整・メール送信の非同期処理
+- `app/Enums` — 状態は enum + モデルのメソッド経由でのみ遷移する
+- `app/Policies` — 管理画面の操作権限、デモユーザー保護
+- `docs/` — 要件定義書・非機能要件定義書・基本設計書・詳細設計書
+- `.github/workflows` — CI/CD
+- `scripts/deploy` — 本番サーバー上でのリリース処理
+
+仕様の詳細は `docs/` 配下の4文書（要件 → 非機能要件 → 基本設計 → 詳細設計）を参照してください。
+
+## ローカル環境での起動・検証
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+docker compose up -d
+docker compose exec app php artisan migrate
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+- 動作確認: http://localhost:8080/ （管理画面は `/admin`）
+- テスト: `docker compose exec app php artisan test`（MySQL 上で実行）
+- 静的解析: `docker compose exec app ./vendor/bin/pint --test`
 
-## Contributing
-
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Shopify と連携する機能を試すには `.env` に `SHOPIFY_*` の実クレデンシャルが必要です
+（未設定でもアプリ自体は起動し、Shopify 連携部分のみ動作しません）。

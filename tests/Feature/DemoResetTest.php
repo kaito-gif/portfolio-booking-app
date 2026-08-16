@@ -2,13 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Mail\AdminAlertMail;
 use App\Models\AuditLog;
 use App\Models\Slot;
 use App\Models\User;
 use App\Models\Workshop;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 /**
@@ -99,5 +102,41 @@ class DemoResetTest extends TestCase
         $this->assertSame(2, User::where('is_demo', true)->count());
 
         app()['env'] = 'testing';
+    }
+
+    /**
+     * 第三者レビュー指摘への対応: demo:reset の失敗は schedule:heartbeat とは
+     * 独立しているため /health からは見えない。失敗時に管理者へ通知することを保証する。
+     */
+    public function test_demo_reset_failure_notifies_admin_and_returns_failure(): void
+    {
+        config(['booking.admin_notification_email' => 'admin@example.com']);
+        Mail::fake();
+
+        Http::fake(function ($request) {
+            $query = (string) ($request->data()['query'] ?? '');
+
+            if (str_contains($query, 'productVariant')) {
+                return Http::response(['errors' => [['message' => 'boom']]], 500);
+            }
+
+            return Http::response(['data' => []]);
+        });
+
+        $exitCode = Artisan::call('demo:reset');
+
+        $this->assertSame(1, $exitCode);
+        Mail::assertSent(AdminAlertMail::class, fn (AdminAlertMail $mail) => $mail->hasTo('admin@example.com')
+            && str_contains($mail->alertSubject, 'demo:reset'));
+        $this->assertNull(Cache::get('demo_reset.last_success_at'));
+    }
+
+    public function test_demo_reset_records_last_success_at_on_success(): void
+    {
+        $this->fakeShopify();
+
+        Artisan::call('demo:reset');
+
+        $this->assertNotNull(Cache::get('demo_reset.last_success_at'));
     }
 }

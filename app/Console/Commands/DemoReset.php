@@ -12,11 +12,14 @@ use App\Models\AuditLog;
 use App\Models\Slot;
 use App\Models\User;
 use App\Models\Workshop;
+use App\Support\AdminNotifier;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * 詳細設計15.1。何度流しても同じ結果になる（冪等）。
@@ -40,26 +43,48 @@ class DemoReset extends Command
             return self::SUCCESS;
         }
 
-        // MySQLのTRUNCATEは行が空でもFK制約の存在自体で失敗するため、一時的に無効化する。
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        DB::table('reservations')->truncate();
-        DB::table('slots')->truncate();
-        DB::table('workshops')->truncate();
-        DB::table('users')->truncate();
-        DB::table('failed_jobs')->truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        try {
+            // MySQLのTRUNCATEは行が空でもFK制約の存在自体で失敗するため、一時的に無効化する。
+            DB::statement('SET FOREIGN_KEY_CHECKS=0');
+            try {
+                DB::table('reservations')->truncate();
+                DB::table('slots')->truncate();
+                DB::table('workshops')->truncate();
+                DB::table('users')->truncate();
+                DB::table('failed_jobs')->truncate();
+            } finally {
+                DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            }
 
-        $workshops = $this->seedWorkshops();
-        $slots = $this->seedSlots($workshops, $inventoryService);
-        $this->seedReservations($slots);
-        $this->applyStatusMix($slots);
-        $this->seedUsers();
-        $this->resetInventory($slots, $inventoryService);
+            $workshops = $this->seedWorkshops();
+            $slots = $this->seedSlots($workshops, $inventoryService);
+            $this->seedReservations($slots);
+            $this->applyStatusMix($slots);
+            $this->seedUsers();
+            $this->resetInventory($slots, $inventoryService);
 
-        $this->info('demo:reset processed workshops='.count($workshops).' slots='.count($slots));
-        Log::info('demo:reset', ['workshops' => count($workshops), 'slots' => count($slots)]);
+            $this->info('demo:reset processed workshops='.count($workshops).' slots='.count($slots));
+            Log::info('demo:reset', ['workshops' => count($workshops), 'slots' => count($slots)]);
 
-        return self::SUCCESS;
+            Cache::forever('demo_reset.last_success_at', CarbonImmutable::now()->toIso8601String());
+
+            return self::SUCCESS;
+        } catch (Throwable $e) {
+            // /health が見ている schedule.last_run_at は schedule:heartbeat が毎分
+            // 独立して更新するため、demo:reset だけが失敗してもそこには現れない
+            // （過去に踏んだ「productionガード誤実装」と同じ盲点）。ここで明示的に
+            // 通知しないと誰にも気づかれないまま翌日以降もデモが壊れた状態になる。
+            Log::error('demo:reset failed', ['exception' => $e->getMessage()]);
+
+            AdminNotifier::notify(
+                suppressionKey: 'demo_reset:failure',
+                subject: '【chanoka】demo:reset が失敗しました',
+                bodyText: "demo:reset の実行が失敗しました。デモ環境が初期状態に戻っていない可能性があります。\n詳細: {$e->getMessage()}",
+                adminUrl: url('/admin'),
+            );
+
+            return self::FAILURE;
+        }
     }
 
     /** @return array<int, Workshop> */

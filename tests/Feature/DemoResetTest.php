@@ -139,4 +139,47 @@ class DemoResetTest extends TestCase
 
         $this->assertNotNull(Cache::get('demo_reset.last_success_at'));
     }
+
+    /**
+     * 第三者レビュー指摘への対応: demo:reset は1日1回しか走らないため
+     * AdminNotifier の30分抑止は連日の失敗を防げない。件名に連続失敗日数を
+     * 出すことで、同じ文面のメールが届き続けて無視されるのを防ぐ。
+     */
+    public function test_demo_reset_failure_subject_counts_consecutive_failures(): void
+    {
+        config(['booking.admin_notification_email' => 'admin@example.com']);
+        Mail::fake();
+
+        Http::fake(function ($request) {
+            $query = (string) ($request->data()['query'] ?? '');
+
+            if (str_contains($query, 'productVariant')) {
+                return Http::response(['errors' => [['message' => 'boom']]], 500);
+            }
+
+            return Http::response(['data' => []]);
+        });
+
+        Artisan::call('demo:reset');
+        // AdminNotifier の30分抑止に引っかからないよう、直前の抑止キーを消してから再実行する。
+        Cache::forget('notify:demo_reset:failure');
+        Artisan::call('demo:reset');
+
+        Mail::assertSent(AdminAlertMail::class, fn (AdminAlertMail $mail) => str_contains($mail->alertSubject, '1日連続'));
+        Mail::assertSent(AdminAlertMail::class, fn (AdminAlertMail $mail) => str_contains($mail->alertSubject, '2日連続'));
+    }
+
+    public function test_demo_reset_success_resets_consecutive_failure_count(): void
+    {
+        // 前日までの連続失敗が記録されている状態を模す(実際の失敗経路を
+        // 経由する形でも再現できるが、Http::fake() の応答をテスト内で
+        // 差し替えると retry() との組み合わせで意図しない例外になり不安定なため、
+        // カウンタの直接投入で「失敗が続いた翌日に成功した」状態を再現する)。
+        Cache::forever('demo_reset.consecutive_failures', 3);
+
+        $this->fakeShopify();
+        Artisan::call('demo:reset');
+
+        $this->assertNull(Cache::get('demo_reset.consecutive_failures'));
+    }
 }

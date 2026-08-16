@@ -27,10 +27,15 @@ class CreateReservation extends CreateRecord
         $limiterKey = 'admin-reservation-create:user:'.(Auth::id() ?? 'guest');
 
         if (RateLimiter::tooManyAttempts($limiterKey, self::MAX_CREATIONS_PER_DAY)) {
+            // RateLimiter::hit の decay はカレンダー日の切り替わりではなく、
+            // 直近ウィンドウ内で最初に登録した時刻から起算した秒数なので、
+            // 「日をまたぐ」ではなく実際に解除される時間を案内する。
+            $minutesUntilAvailable = (int) ceil(RateLimiter::availableIn($limiterKey) / 60);
+
             Notification::make()
                 ->danger()
-                ->title('本日の手動登録上限に達しました')
-                ->body('確認メールの誤送信・悪用防止のため、1日あたりの手動登録回数に上限を設けています。日をまたいでから再度お試しください。')
+                ->title('登録回数の上限に達しました')
+                ->body("しばらく時間をおいてから再度お試しください（あと約{$minutesUntilAvailable}分）。")
                 ->send();
 
             $this->halt();

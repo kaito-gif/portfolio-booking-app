@@ -6,6 +6,7 @@ use App\Mail\AdminAlertMail;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Throwable;
 
 /**
  * 詳細設計14章。抑止は Cache::add の戻り値で判定する（has→putの2段階にしない。
@@ -33,6 +34,16 @@ final class AdminNotifier
             return;
         }
 
-        Mail::to($to)->send(new AdminAlertMail($subject, $bodyText, $adminUrl));
+        try {
+            Mail::to($to)->send(new AdminAlertMail($subject, $bodyText, $adminUrl));
+        } catch (Throwable $e) {
+            // 通知メール自体の送信失敗（SMTP停止等）を握りつぶすと、元の障害と
+            // あわせた二重障害が誰にも気づかれなくなる。ここでは最低限ログに残す。
+            Log::error('admin notification failed to send', [
+                'subject' => $subject,
+                'suppression_key' => $suppressionKey,
+                'exception' => $e->getMessage(),
+            ]);
+        }
     }
 }

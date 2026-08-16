@@ -67,6 +67,7 @@ class DemoReset extends Command
             Log::info('demo:reset', ['workshops' => count($workshops), 'slots' => count($slots)]);
 
             Cache::forever('demo_reset.last_success_at', CarbonImmutable::now()->toIso8601String());
+            Cache::forget('demo_reset.consecutive_failures');
 
             return self::SUCCESS;
         } catch (Throwable $e) {
@@ -76,10 +77,15 @@ class DemoReset extends Command
             // 通知しないと誰にも気づかれないまま翌日以降もデモが壊れた状態になる。
             Log::error('demo:reset failed', ['exception' => $e->getMessage()]);
 
+            // demo:reset は1日1回しか走らないため AdminNotifier の30分抑止は
+            // 実質効かず、障害が連日続くと同じ文面のメールが届き続けてしまう。
+            // 件名に連続失敗日数を出し、放置されているかが一目で分かるようにする。
+            $consecutiveFailures = (int) Cache::increment('demo_reset.consecutive_failures');
+
             AdminNotifier::notify(
                 suppressionKey: 'demo_reset:failure',
-                subject: '【chanoka】demo:reset が失敗しました',
-                bodyText: "demo:reset の実行が失敗しました。デモ環境が初期状態に戻っていない可能性があります。\n詳細: {$e->getMessage()}",
+                subject: "【chanoka】demo:reset が失敗しました（{$consecutiveFailures}日連続）",
+                bodyText: "demo:reset の実行が失敗しました。デモ環境が初期状態に戻っていない可能性があります。\n連続失敗: {$consecutiveFailures}日目\n詳細: {$e->getMessage()}",
                 adminUrl: url('/admin'),
             );
 

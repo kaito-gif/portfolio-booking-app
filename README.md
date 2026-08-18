@@ -7,6 +7,18 @@ Shopify が持たない予約業務（受付・電話予約・キャンセル・
 このリポジトリはポートフォリオとして公開しているものであり、クライアント案件の成果物ではありません。
 掲載しているブランド・商品・人物名はすべて架空のものです。
 
+## 関連する作品
+
+架空の日本茶ブランド「chanoka」を題材に、Shopify まわりの3領域を一人で実装した連作の1つです。
+
+| 作品 | 領域 |
+|---|---|
+| [chanoka デモストア](https://github.com/kaito-gif/shopify-theme-demo-chanoka) | Shopify テーマ実装（Dawn ベース） |
+| [chanoka のし・ギフト対応アプリ](https://github.com/kaito-gif/portfolio-chanoka-app) | Shopify カスタムアプリ（extension-only） |
+| **chanoka ワークショップ予約管理**（このリポジトリ） | Laravel / Filament バックエンド |
+
+3作品まとめての解説: [Shopify テーマ構築・カスタマイズ](https://impartial-astronaut-89c.notion.site/Shopify-3b032860c0bd81369c52f1fc7e587f78)
+
 ## デモ
 
 デモ環境の URL・デモアカウント・システム構成・実装のポイントは、以下の公開ページに掲載しています。
@@ -25,6 +37,19 @@ Shopify が持たない予約業務（受付・電話予約・キャンセル・
 
 キャンセル時は Shopify の在庫を1戻します。定員超過の判定は持たず、Shopify の在庫を
 売り切れ制御の唯一の正としているため、二重管理が発生しません。
+
+### 設計判断
+
+- **在庫整合を「手動登録は同期・キャンセルは非同期」と意図的に非対称にした。** 定員超過は
+  業務上最も重い事故なので手動登録は遅くても同期で在庫を押さえて失敗なら予約を残さない。
+  キャンセルの遅延は売り逃しだけなので非同期で顧客体験を優先。安全側がどちらかで
+  同期/非同期を決める（詳細: `docs/design.md`）
+- **Xserver共用サーバー（Redis不可・常駐プロセス不可）前提の全体設計。** キュー・キャッシュ・
+  セッションはすべて `database` ドライバ、`queue:work --stop-when-empty` を毎分cronで回す
+  （詳細: `docs/non-functional-requirements.md`）
+- **cronが止まると全部止まる構成の弱点を `/health` のheartbeatで外から見る。** 最後に
+  `schedule:run` が動いた時刻を返し、10分空けば503。無料の外形監視で5分間隔監視する
+  （詳細: `docs/non-functional-requirements.md`）
 
 ## 技術スタック
 
